@@ -66,6 +66,7 @@ describe('setup-dotnet tests', () => {
   const setOutputSpy = core.setOutput as jest.Mock;
 
   const existsSyncSpy = fs.existsSync as jest.Mock;
+  const readFileSyncSpy = fs.readFileSync as jest.Mock;
 
   const maxSatisfyingSpy = jest.spyOn(semver, 'maxSatisfying');
 
@@ -289,6 +290,25 @@ describe('setup-dotnet tests', () => {
       expect(DotnetInstallDir.addToPath).toHaveBeenCalledTimes(1);
     });
 
+    it("should read the 'check-latest' input and pass it to DotnetCoreInstaller", async () => {
+      inputs['dotnet-version'] = ['10.0.101'];
+      inputs['dotnet-quality'] = '';
+      inputs['architecture'] = '';
+      inputs['check-latest'] = false;
+
+      let capturedCheckLatest: boolean | undefined;
+      installDotnetSpy.mockImplementation(function (this: any) {
+        capturedCheckLatest = this.checkLatest;
+        return Promise.resolve('');
+      });
+
+      await setup.run();
+
+      expect(getBooleanInputSpy).toHaveBeenCalledWith('check-latest');
+      expect(installDotnetSpy).toHaveBeenCalledTimes(1);
+      expect(capturedCheckLatest).toBe(false);
+    });
+
     it('should fail the action if unsupported architecture is provided', async () => {
       inputs['dotnet-version'] = ['10.0.101'];
       inputs['dotnet-quality'] = '';
@@ -388,6 +408,38 @@ describe('setup-dotnet tests', () => {
       expect(warningSpy).toHaveBeenCalledWith(
         `The 'dotnet-channel' input is only supported when 'dotnet-version' is set to 'latest'.`
       );
+    });
+
+    it('should pass the global.json rollForward minimum version to DotnetCoreInstaller', async () => {
+      inputs['dotnet-version'] = [];
+      inputs['dotnet-quality'] = '';
+      inputs['dotnet-channel'] = '';
+      inputs['architecture'] = '';
+      inputs['check-latest'] = false;
+      inputs['global-json-file'] = 'global.json';
+
+      existsSyncSpy.mockReturnValue(true);
+      readFileSyncSpy.mockReturnValue(
+        JSON.stringify({
+          sdk: {version: '8.0.400', rollForward: 'latestFeature'}
+        })
+      );
+
+      let capturedVersion: string | undefined;
+      let capturedMinimumVersion: string | undefined;
+      installDotnetSpy.mockImplementation(function (this: any) {
+        capturedVersion = this.version;
+        capturedMinimumVersion = this.minimumVersion;
+        return Promise.resolve('8.0.412');
+      });
+
+      await setup.run();
+      inputs['global-json-file'] = '';
+
+      // 'latestFeature' widens the spec to the 8.0 channel, but 8.0.400 stays
+      // the lowest SDK that still satisfies global.json.
+      expect(capturedVersion).toBe('8.0');
+      expect(capturedMinimumVersion).toBe('8.0.400');
     });
   });
 });

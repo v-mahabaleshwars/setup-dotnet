@@ -309,6 +309,34 @@ steps:
 
 > **Note**: Ensure workloads are compatible with your runner's OS, architecture, and .NET SDK version before enabling workload installation. Some workloads may require additional installation time due to large toolchain downloads.
 
+## Using the `check-latest` input
+
+By default (`check-latest: true`) the action resolves and installs the latest available version that satisfies the requested version spec online. This matches the historical behavior, so existing workflows are unaffected.
+
+When `check-latest: false`, the action first looks for an SDK that is already installed under the [`DOTNET_INSTALL_DIR`](#environment-variables) directory. If a locally installed SDK satisfies the request, it is reused and **all network calls needed to resolve and install the SDK are skipped** (including the runtime pre-install). This is useful for air-gapped or preloaded runners. If no local SDK satisfies the request, the action falls back to the normal online installation.
+
+```yaml
+steps:
+- uses: actions/checkout@v7
+- name: Reuse a preinstalled SDK when available (offline-friendly)
+  uses: actions/setup-dotnet@v6
+  with:
+    dotnet-version: '8.0.x'
+    check-latest: false
+- run: dotnet build <my project>
+```
+
+> **Note**: `check-latest: false` does not apply to cross-architecture requests. When the requested `architecture` differs from the runner's native architecture, the action always installs online (and fails when offline), to avoid reusing an SDK built for the wrong architecture.
+
+A locally installed SDK is reused only when it satisfies all of the following, otherwise the action installs online:
+
+- it matches the requested version spec (`A.B.C`, `A.B`, `A.B.x`, `A.B.Cxx`, `A`, `A.x` or `latest`). In the wildcard position, `x`, `X` and `*` are equivalent, so `A.B.X`, `A.B.*`, `A.X` and `A.*` are accepted as well;
+- it is not older than the `sdk.version` declared in `global.json`, because `rollForward` only ever rolls forward;
+- it matches the requested `dotnet-quality` (`preview` and `daily` require a prerelease SDK, any other value requires a GA one). An exact version such as `8.0.404` is matched as-is, so `dotnet-quality` does not apply to it;
+- the `dotnet` executable is present next to the SDK folders.
+
+Requests that carry no major/minor version and therefore need the .NET release metadata to be resolved are always installed online, even with `check-latest: false`. This covers `dotnet-version: latest` combined with `dotnet-channel: LTS` or `STS`, a bare wildcard (`dotnet-version: x`, `X` or `*`) and a `global.json` with `rollForward: latestMajor`, which all resolve to the `LTS` channel. Wildcards that are qualified with a major or minor version, such as `8.x` or `8.0.x`, a bare `latest` and the `latestMinor`, `latestFeature` and `latestPatch` policies are still eligible for local reuse.
+
 # Outputs and environment variables
 
 ## Outputs

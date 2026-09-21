@@ -54,8 +54,21 @@ export async function run() {
     // Proxy, auth, (etc) are still set up, even if no version is identified
     //
     const versions = core.getMultilineInput('dotnet-version');
+    // Version spec -> lowest SDK version accepted for it. Only global.json with
+    // a 'rollForward' policy sets a floor, because rolling forward widens the
+    // spec while the declared version stays the minimum.
+    const minimumVersions = new Map<string, string>();
+    const addVersionFromGlobalJson = (globalJsonPath: string) => {
+      const {version, minimumVersion} =
+        getVersionFromGlobalJson(globalJsonPath);
+      versions.push(version);
+      if (minimumVersion) {
+        minimumVersions.set(version, minimumVersion);
+      }
+    };
     const installedDotnetVersions: (string | null)[] = [];
     const architecture = getArchitectureInput();
+    const checkLatest = core.getBooleanInput('check-latest');
     let dotnetChannel = core.getInput('dotnet-channel');
 
     const isLatestRequested = versions.some(
@@ -87,7 +100,7 @@ export async function run() {
           `The specified global.json file '${globalJsonFileInput}' does not exist`
         );
       }
-      versions.push(getVersionFromGlobalJson(globalJsonPath));
+      addVersionFromGlobalJson(globalJsonPath);
     }
 
     if (!versions.length) {
@@ -95,7 +108,7 @@ export async function run() {
       core.debug('No version found, trying to find version from global.json');
       const globalJsonPath = path.join(process.cwd(), 'global.json');
       if (fs.existsSync(globalJsonPath)) {
-        versions.push(getVersionFromGlobalJson(globalJsonPath));
+        addVersionFromGlobalJson(globalJsonPath);
       } else {
         core.info(
           `The global.json wasn't found in the root directory. No .NET version will be installed.`
@@ -121,7 +134,9 @@ export async function run() {
           version,
           quality,
           architecture,
-          version.toLowerCase() === 'latest' ? dotnetChannel : undefined
+          version.toLowerCase() === 'latest' ? dotnetChannel : undefined,
+          checkLatest,
+          minimumVersions.get(version)
         );
         const installedVersion = await dotnetInstaller.installDotnet();
         installedDotnetVersions.push(installedVersion);
@@ -200,8 +215,20 @@ function getArchitectureInput(): SupportedArchitecture | '' {
   );
 }
 
-function getVersionFromGlobalJson(globalJsonPath: string): string {
+interface GlobalJsonVersion {
+  /** The version spec handed to the installer. */
+  version: string;
+  /**
+   * Lowest SDK version that still satisfies global.json. Set only when
+   * 'rollForward' widened the spec, because rolling forward never allows an
+   * SDK older than the declared version.
+   */
+  minimumVersion?: string;
+}
+
+function getVersionFromGlobalJson(globalJsonPath: string): GlobalJsonVersion {
   let version = '';
+  let minimumVersion: string | undefined;
   const globalJson = JSON5.parse(
     // .trim() is necessary to strip BOM https://github.com/nodejs/node/issues/20649
     fs.readFileSync(globalJsonPath, {encoding: 'utf8'}).trim(),
@@ -244,9 +271,13 @@ function getVersionFromGlobalJson(globalJsonPath: string): string {
           version = `${major}.${minor}.${feature}xx`;
           break;
       }
+
+      if (version !== globalJson.sdk.version) {
+        minimumVersion = globalJson.sdk.version;
+      }
     }
   }
-  return version;
+  return {version, minimumVersion};
 }
 
 function outputInstalledVersion(

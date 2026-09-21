@@ -738,3 +738,163 @@ jobs:
       - name: Verify dotnet
         shell: pwsh
         run: __tests__/verify-dotnet.ps1 -Patterns "^9\.0\.1\d{2}"
+
+  test-check-latest-false-reuses-pinned-version:
+    runs-on: ${{ matrix.operating-system }}
+    strategy:
+      fail-fast: false
+      matrix:
+        operating-system: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Clear toolcache
+        shell: pwsh
+        run: __tests__/clear-toolcache.ps1 ${{ runner.os }}
+      - name: Preinstall a pinned SDK online
+        uses: ./
+        with:
+          dotnet-version: '8.0.412'
+      - name: Request the same SDK with check-latest false
+        id: reuse
+        uses: ./
+        with:
+          dotnet-version: '8.0.412'
+          check-latest: false
+      - name: The locally installed SDK is reused
+        shell: pwsh
+        run: |
+          $reused = '${{ steps.reuse.outputs.dotnet-version }}'
+          Write-Host "reused: $reused"
+          if ($reused -ne '8.0.412') {
+            throw "Expected the preinstalled 8.0.412 to be reused, got '$reused'."
+          }
+      - name: Verify dotnet
+        shell: pwsh
+        run: __tests__/verify-dotnet.ps1 -Patterns "^8\.0\.412$"
+
+  test-check-latest-false-reuses-floating-version:
+    runs-on: ${{ matrix.operating-system }}
+    strategy:
+      fail-fast: false
+      matrix:
+        operating-system: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Clear toolcache
+        shell: pwsh
+        run: __tests__/clear-toolcache.ps1 ${{ runner.os }}
+      - name: Preinstall 8.0.x online
+        id: preinstall
+        uses: ./
+        with:
+          dotnet-version: '8.0.x'
+      - name: Request 8.0.x with check-latest false
+        id: reuse
+        uses: ./
+        with:
+          dotnet-version: '8.0.x'
+          check-latest: false
+      - name: No newer patch is downloaded
+        shell: pwsh
+        run: |
+          $preinstalled = '${{ steps.preinstall.outputs.dotnet-version }}'
+          $reused = '${{ steps.reuse.outputs.dotnet-version }}'
+          Write-Host "preinstalled: $preinstalled, reused: $reused"
+          if ($reused -ne $preinstalled) {
+            throw "Expected '$preinstalled' to be reused, got '$reused'."
+          }
+
+  test-check-latest-false-falls-back-online:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Clear toolcache
+        shell: pwsh
+        run: __tests__/clear-toolcache.ps1 ${{ runner.os }}
+      - name: Request an SDK that is not installed locally
+        id: setup
+        uses: ./
+        with:
+          dotnet-version: '9.0.308'
+          check-latest: false
+      - name: The SDK is installed through the online fallback
+        shell: pwsh
+        run: |
+          Write-Host "resolved: ${{ steps.setup.outputs.dotnet-version }}"
+      - name: Verify dotnet
+        shell: pwsh
+        run: __tests__/verify-dotnet.ps1 -Patterns "^9\.0\.308$"
+
+  test-check-latest-false-respects-global-json-floor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Clear toolcache
+        shell: pwsh
+        run: __tests__/clear-toolcache.ps1 ${{ runner.os }}
+      - name: Preinstall an SDK below the global.json version
+        uses: ./
+        with:
+          dotnet-version: '8.0.404'
+      - name: Write a global.json that rolls forward from a higher version
+        shell: pwsh
+        run: |
+          @'
+          {
+            "sdk": {
+              "version": "8.0.412",
+              "rollForward": "latestFeature"
+            }
+          }
+          '@ | Set-Content -Path global.json -Encoding utf8
+      - name: Setup dotnet from global.json with check-latest false
+        id: setup
+        uses: ./
+        with:
+          global-json-file: global.json
+          check-latest: false
+      - name: The resolved SDK never rolls back below global.json
+        shell: pwsh
+        run: |
+          $resolved = '${{ steps.setup.outputs.dotnet-version }}'
+          Write-Host "resolved: $resolved"
+          if ([version]$resolved -lt [version]'8.0.412') {
+            throw "Rolled back below the global.json version: '$resolved'."
+          }
+          # Fails with "A compatible .NET SDK was not found" if the floor is violated.
+          dotnet --version
+
+  test-check-latest-false-latest-honors-channel:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Clear toolcache
+        shell: pwsh
+        run: __tests__/clear-toolcache.ps1 ${{ runner.os }}
+      - name: Preinstall an STS SDK so it becomes the highest installed one
+        uses: ./
+        with:
+          dotnet-version: '9.0.308'
+      - name: Request latest from the LTS channel with check-latest false
+        id: setup
+        uses: ./
+        with:
+          dotnet-version: latest
+          dotnet-channel: LTS
+          check-latest: false
+      - name: The highest installed SDK is not reused for an LTS request
+        shell: pwsh
+        run: |
+          $resolved = '${{ steps.setup.outputs.dotnet-version }}'
+          Write-Host "resolved: $resolved"
+          if (-not $resolved) {
+            throw "No version was resolved for the LTS channel."
+          }
+          if ($resolved -like '9.*') {
+            throw "Reused the STS SDK '$resolved' for an LTS request."
+          }
