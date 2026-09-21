@@ -334,7 +334,9 @@ A locally installed SDK is reused only when all of the following hold, otherwise
 - the `dotnet` executable is present next to the SDK folders;
 - the requested `architecture` is the runner's native one. Cross-architecture requests always install online, to avoid reusing an SDK built for the wrong architecture.
 
-Requests that need the .NET release metadata to be resolved also always install online: `dotnet-version: latest` combined with `dotnet-channel: LTS` or `STS`, a bare wildcard (`x`, `X` or `*`) and a `global.json` with `rollForward: latestMajor`.
+When `global.json` declares a `rollForward` policy, the highest locally installed SDK the policy accepts is reused: any major for `latestMajor`, any minor of the declared major for `latestMinor`, any feature band for `latestFeature`, and any patch in the declared band for `latestPatch`. `disable` and a prerelease `sdk.version` require the exact declared version.
+
+Requests that need the .NET release metadata always install online: `dotnet-version: latest` with `dotnet-channel: LTS` or `STS`, and a bare wildcard (`x`, `X` or `*`).
 
 ### Setting `check-latest` from the environment
 

@@ -86,7 +86,6 @@ describe('setup-dotnet tests', () => {
       DotnetInstallDir.addToPath = jest.fn();
       getMultilineInputSpy.mockImplementation(input => inputs[input as string]);
       getInputSpy.mockImplementation(input => inputs[input as string]);
-      // Mirrors core.getBooleanInput(), which only ever sees strings.
       getBooleanInputSpy.mockImplementation(input => {
         const value = inputs[input as string];
         return typeof value === 'string'
@@ -495,8 +494,6 @@ describe('setup-dotnet tests', () => {
       await setup.run();
       inputs['global-json-file'] = '';
 
-      // 'latestFeature' widens the spec to the 8.0 channel, but 8.0.400 stays
-      // the lowest SDK that still satisfies global.json.
       expect(capturedVersion).toBe('8.0');
       expect(capturedMinimumVersion).toBe('8.0.400');
     });

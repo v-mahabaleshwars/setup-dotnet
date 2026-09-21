@@ -546,7 +546,6 @@ describe('installer tests', () => {
             stderr: ''
           })
         );
-        // The dotnet muxer is expected to sit next to the SDK folders.
         existsSyncSpy.mockReturnValue(true);
       });
 
@@ -584,7 +583,6 @@ describe('installer tests', () => {
         );
         await dotnetInstaller.installDotnet();
 
-        // Runtime pre-install + SDK install => two script executions.
         expect(getExecOutputSpy).toHaveBeenCalledTimes(2);
       });
 
@@ -635,8 +633,6 @@ describe('installer tests', () => {
           false
         );
 
-        // The online path owns the validation, so the error has to stay the
-        // same regardless of what is installed locally.
         await expect(dotnetInstaller.installDotnet()).rejects.toThrow(
           `The 'dotnet-version' was supplied in invalid format: 3.1.1xx! The A.B.Cxx syntax is available since the .NET 5.0 release.`
         );
@@ -691,7 +687,6 @@ describe('installer tests', () => {
         );
         await dotnetInstaller.installDotnet();
 
-        // Cross-arch always goes online (two script executions).
         expect(getExecOutputSpy).toHaveBeenCalledTimes(2);
         archSpy.mockRestore();
       });
@@ -758,7 +753,6 @@ describe('installer tests', () => {
         );
         await dotnetInstaller.installDotnet();
 
-        // No local match => runtime pre-install + SDK install (two executions).
         expect(getExecOutputSpy).toHaveBeenCalledTimes(2);
       });
 
@@ -775,7 +769,6 @@ describe('installer tests', () => {
         );
         await dotnetInstaller.installDotnet();
 
-        // LTS cannot be mapped to a version offline => online resolution.
         expect(getExecOutputSpy).toHaveBeenCalledTimes(2);
       });
 
@@ -808,7 +801,6 @@ describe('installer tests', () => {
         );
         await dotnetInstaller.installDotnet();
 
-        // 'x' resolves to the LTS channel online, which is not known locally.
         expect(getExecOutputSpy).toHaveBeenCalledTimes(2);
       });
 
@@ -826,7 +818,6 @@ describe('installer tests', () => {
         );
         await dotnetInstaller.installDotnet();
 
-        // Rolling back below the global.json version would break dotnet build.
         expect(getExecOutputSpy).toHaveBeenCalledTimes(2);
       });
 
@@ -861,7 +852,6 @@ describe('installer tests', () => {
         );
         await dotnetInstaller.installDotnet();
 
-        // An orphaned sdk folder without the CLI must not count as installed.
         expect(getExecOutputSpy).toHaveBeenCalledTimes(2);
       });
 
@@ -909,7 +899,6 @@ describe('installer tests', () => {
         );
         const installedVersion = await dotnetInstaller.installDotnet();
 
-        // Online a bare '3' maps to the 3.1 channel, so 3.0.103 must be ignored.
         expect(installedVersion).toBe('3.1.426');
         expect(getExecOutputSpy).not.toHaveBeenCalled();
       });
@@ -963,8 +952,6 @@ describe('installer tests', () => {
           false
         );
 
-        // The online resolver rejects 'A.B.CXX', so reusing it locally would
-        // turn an invalid input into a silent success.
         await expect(dotnetInstaller.installDotnet()).rejects.toThrow(
           `The 'dotnet-version' was supplied in invalid format: 8.0.1XX!`
         );
@@ -983,8 +970,6 @@ describe('installer tests', () => {
             false
           );
 
-          // The online resolver rejects leading zeros, so matching them
-          // locally would turn an invalid input into a silent success.
           await expect(dotnetInstaller.installDotnet()).rejects.toThrow(
             `The 'dotnet-version' was supplied in invalid format: ${version}!`
           );
@@ -993,7 +978,6 @@ describe('installer tests', () => {
 
       it('ignores an sdk folder that does not contain an SDK', async () => {
         readdirSyncSpy.mockReturnValue(makeDirents(['8.0.412']));
-        // The muxer exists, but the sdk/8.0.412 folder is empty.
         existsSyncSpy.mockImplementation(
           (target: string) => !target.includes('dotnet.dll')
         );
@@ -1025,10 +1009,179 @@ describe('installer tests', () => {
         );
         const installedVersion = await dotnetInstaller.installDotnet();
 
-        // The install script ignores 'dotnet-quality' below .NET 6, so the
-        // online path would select the GA build here as well.
         expect(installedVersion).toBe('3.1.426');
         expect(getExecOutputSpy).not.toHaveBeenCalled();
+      });
+
+      describe('global.json rollForward tests', () => {
+        it('latestMajor reuses the highest local SDK across majors', async () => {
+          readdirSyncSpy.mockReturnValue(makeDirents(['8.0.412', '9.0.101']));
+
+          const dotnetInstaller = new installer.DotnetCoreInstaller(
+            '',
+            '',
+            undefined,
+            undefined,
+            false,
+            '8.0.100'
+          );
+          const installedVersion = await dotnetInstaller.installDotnet();
+
+          expect(installedVersion).toBe('9.0.101');
+          expect(getExecOutputSpy).not.toHaveBeenCalled();
+        });
+
+        it('latestMajor reuses a local SDK of the declared major', async () => {
+          readdirSyncSpy.mockReturnValue(makeDirents(['8.0.412']));
+
+          const dotnetInstaller = new installer.DotnetCoreInstaller(
+            '',
+            '',
+            undefined,
+            undefined,
+            false,
+            '8.0.100'
+          );
+          const installedVersion = await dotnetInstaller.installDotnet();
+
+          expect(installedVersion).toBe('8.0.412');
+          expect(getExecOutputSpy).not.toHaveBeenCalled();
+        });
+
+        it('latestMajor ignores local SDKs below the declared version', async () => {
+          readdirSyncSpy.mockReturnValue(makeDirents(['8.0.100', '7.0.400']));
+          maxSatisfyingSpy.mockImplementation(() => '8.0.412');
+
+          const dotnetInstaller = new installer.DotnetCoreInstaller(
+            '',
+            '',
+            undefined,
+            undefined,
+            false,
+            '8.0.412'
+          );
+          await dotnetInstaller.installDotnet();
+
+          expect(getExecOutputSpy).toHaveBeenCalledTimes(2);
+        });
+
+        it('latestMajor keeps requiring GA builds when quality is preview', async () => {
+          readdirSyncSpy.mockReturnValue(makeDirents(['9.0.200-preview.1']));
+          maxSatisfyingSpy.mockImplementation(() => '8.0.412');
+
+          const dotnetInstaller = new installer.DotnetCoreInstaller(
+            '',
+            'preview',
+            undefined,
+            undefined,
+            false,
+            '8.0.100'
+          );
+          await dotnetInstaller.installDotnet();
+
+          expect(getExecOutputSpy).toHaveBeenCalledTimes(2);
+        });
+
+        it('latestMinor reuses a higher local minor of the same major', async () => {
+          readdirSyncSpy.mockReturnValue(makeDirents(['8.1.200', '8.2.300']));
+
+          const dotnetInstaller = new installer.DotnetCoreInstaller(
+            '8',
+            '',
+            undefined,
+            undefined,
+            false,
+            '8.1.100'
+          );
+          const installedVersion = await dotnetInstaller.installDotnet();
+
+          expect(installedVersion).toBe('8.2.300');
+          expect(getExecOutputSpy).not.toHaveBeenCalled();
+        });
+
+        it('latestMinor does not cross into another major', async () => {
+          readdirSyncSpy.mockReturnValue(makeDirents(['9.0.101']));
+          maxSatisfyingSpy.mockImplementation(() => '8.0.412');
+
+          const dotnetInstaller = new installer.DotnetCoreInstaller(
+            '8',
+            '',
+            undefined,
+            undefined,
+            false,
+            '8.1.100'
+          );
+          await dotnetInstaller.installDotnet();
+
+          expect(getExecOutputSpy).toHaveBeenCalledTimes(2);
+        });
+
+        it('latestMinor ignores local SDKs below the declared version', async () => {
+          readdirSyncSpy.mockReturnValue(makeDirents(['8.0.412']));
+          maxSatisfyingSpy.mockImplementation(() => '8.1.100');
+
+          const dotnetInstaller = new installer.DotnetCoreInstaller(
+            '8',
+            '',
+            undefined,
+            undefined,
+            false,
+            '8.1.100'
+          );
+          await dotnetInstaller.installDotnet();
+
+          expect(getExecOutputSpy).toHaveBeenCalledTimes(2);
+        });
+
+        it('latestFeature reuses the highest patch above the floor', async () => {
+          readdirSyncSpy.mockReturnValue(makeDirents(['8.0.100', '8.0.412']));
+
+          const dotnetInstaller = new installer.DotnetCoreInstaller(
+            '8.0',
+            '',
+            undefined,
+            undefined,
+            false,
+            '8.0.200'
+          );
+          const installedVersion = await dotnetInstaller.installDotnet();
+
+          expect(installedVersion).toBe('8.0.412');
+          expect(getExecOutputSpy).not.toHaveBeenCalled();
+        });
+
+        it('latestPatch stays inside the declared feature band', async () => {
+          readdirSyncSpy.mockReturnValue(makeDirents(['8.0.205', '8.0.412']));
+
+          const dotnetInstaller = new installer.DotnetCoreInstaller(
+            '8.0.2xx',
+            '',
+            undefined,
+            undefined,
+            false,
+            '8.0.200'
+          );
+          const installedVersion = await dotnetInstaller.installDotnet();
+
+          expect(installedVersion).toBe('8.0.205');
+          expect(getExecOutputSpy).not.toHaveBeenCalled();
+        });
+
+        it('installs online for an empty version without a rollForward floor', async () => {
+          readdirSyncSpy.mockReturnValue(makeDirents(['8.0.412']));
+          maxSatisfyingSpy.mockImplementation(() => '8.0.412');
+
+          const dotnetInstaller = new installer.DotnetCoreInstaller(
+            '',
+            '',
+            undefined,
+            undefined,
+            false
+          );
+          await dotnetInstaller.installDotnet();
+
+          expect(getExecOutputSpy).toHaveBeenCalledTimes(2);
+        });
       });
     });
 
