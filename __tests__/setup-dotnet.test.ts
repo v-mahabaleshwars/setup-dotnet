@@ -529,6 +529,122 @@ describe('setup-dotnet tests', () => {
       expect(capturedRollForward).toBe('feature');
     });
 
+    it('should default an omitted rollForward to patch', async () => {
+      inputs['dotnet-version'] = [];
+      inputs['dotnet-quality'] = '';
+      inputs['dotnet-channel'] = '';
+      inputs['architecture'] = '';
+      inputs['check-latest'] = 'false';
+      inputs['global-json-file'] = 'global.json';
+
+      existsSyncSpy.mockReturnValue(true);
+      readFileSyncSpy.mockReturnValue(
+        JSON.stringify({sdk: {version: '8.0.100'}})
+      );
+
+      let capturedVersion: string | undefined;
+      let capturedMinimumVersion: string | undefined;
+      let capturedRollForward: string | undefined;
+      installDotnetSpy.mockImplementation(function (this: any) {
+        capturedVersion = this.version;
+        capturedMinimumVersion = this.minimumVersion;
+        capturedRollForward = this.rollForward;
+        return Promise.resolve('8.0.100');
+      });
+
+      await setup.run();
+      inputs['global-json-file'] = '';
+
+      expect(capturedVersion).toBe('8.0.100');
+      expect(capturedMinimumVersion).toBe('8.0.100');
+      expect(capturedRollForward).toBe('patch');
+    });
+
+    it('should not default to patch for a prerelease sdk version', async () => {
+      inputs['dotnet-version'] = [];
+      inputs['dotnet-quality'] = '';
+      inputs['dotnet-channel'] = '';
+      inputs['architecture'] = '';
+      inputs['check-latest'] = 'false';
+      inputs['global-json-file'] = 'global.json';
+
+      existsSyncSpy.mockReturnValue(true);
+      readFileSyncSpy.mockReturnValue(
+        JSON.stringify({sdk: {version: '8.0.100-preview.1'}})
+      );
+
+      let capturedMinimumVersion: string | undefined;
+      let capturedRollForward: string | undefined;
+      installDotnetSpy.mockImplementation(function (this: any) {
+        capturedMinimumVersion = this.minimumVersion;
+        capturedRollForward = this.rollForward;
+        return Promise.resolve('8.0.100-preview.1');
+      });
+
+      await setup.run();
+      inputs['global-json-file'] = '';
+
+      expect(capturedMinimumVersion).toBeUndefined();
+      expect(capturedRollForward).toBeUndefined();
+    });
+
+    it('should not default to patch for a version that is not a full SDK version', async () => {
+      inputs['dotnet-version'] = [];
+      inputs['dotnet-quality'] = '';
+      inputs['dotnet-channel'] = '';
+      inputs['architecture'] = '';
+      inputs['check-latest'] = 'false';
+      inputs['global-json-file'] = 'global.json';
+
+      existsSyncSpy.mockReturnValue(true);
+      readFileSyncSpy.mockReturnValue(
+        JSON.stringify({sdk: {version: '8.0.0'}})
+      );
+
+      let capturedMinimumVersion: string | undefined;
+      let capturedRollForward: string | undefined;
+      installDotnetSpy.mockImplementation(function (this: any) {
+        capturedMinimumVersion = this.minimumVersion;
+        capturedRollForward = this.rollForward;
+        return Promise.resolve('8.0.0');
+      });
+
+      await setup.run();
+      inputs['global-json-file'] = '';
+
+      expect(capturedMinimumVersion).toBeUndefined();
+      expect(capturedRollForward).toBeUndefined();
+    });
+
+    it('should not roll forward a version pinned by the dotnet-version input', async () => {
+      inputs['dotnet-version'] = ['8.0.100'];
+      inputs['dotnet-quality'] = '';
+      inputs['dotnet-channel'] = '';
+      inputs['architecture'] = '';
+      inputs['check-latest'] = 'false';
+      inputs['global-json-file'] = 'global.json';
+
+      existsSyncSpy.mockReturnValue(true);
+      readFileSyncSpy.mockReturnValue(
+        JSON.stringify({sdk: {version: '8.0.100'}})
+      );
+
+      let capturedMinimumVersion: string | undefined;
+      let capturedRollForward: string | undefined;
+      installDotnetSpy.mockImplementation(function (this: any) {
+        capturedMinimumVersion = this.minimumVersion;
+        capturedRollForward = this.rollForward;
+        return Promise.resolve('8.0.100');
+      });
+
+      await setup.run();
+      inputs['global-json-file'] = '';
+
+      expect(installDotnetSpy).toHaveBeenCalledTimes(1);
+      expect(capturedMinimumVersion).toBeUndefined();
+      expect(capturedRollForward).toBeUndefined();
+    });
+
     it('should not set a rollForward policy for disable', async () => {
       inputs['dotnet-version'] = [];
       inputs['dotnet-quality'] = '';

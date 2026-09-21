@@ -1340,6 +1340,228 @@ describe('installer tests', () => {
           expect(getExecOutputSpy).not.toHaveBeenCalled();
         });
 
+        it('feature prefers the declared band over a higher band', async () => {
+          readdirSyncSpy.mockReturnValue(makeDirents(['8.0.105', '8.0.400']));
+
+          const dotnetInstaller = new installer.DotnetCoreInstaller(
+            '8.0.100',
+            '',
+            undefined,
+            undefined,
+            false,
+            '8.0.100',
+            'feature'
+          );
+          const installedVersion = await dotnetInstaller.installDotnet();
+
+          expect(installedVersion).toBe('8.0.105');
+          expect(getExecOutputSpy).not.toHaveBeenCalled();
+        });
+
+        it('feature rolls to the next higher band, not the highest', async () => {
+          readdirSyncSpy.mockReturnValue(
+            makeDirents(['8.0.200', '8.0.300', '8.0.400'])
+          );
+
+          const dotnetInstaller = new installer.DotnetCoreInstaller(
+            '8.0.100',
+            '',
+            undefined,
+            undefined,
+            false,
+            '8.0.100',
+            'feature'
+          );
+          const installedVersion = await dotnetInstaller.installDotnet();
+
+          expect(installedVersion).toBe('8.0.200');
+          expect(getExecOutputSpy).not.toHaveBeenCalled();
+        });
+
+        it('feature takes the latest patch of the selected band', async () => {
+          readdirSyncSpy.mockReturnValue(
+            makeDirents(['8.0.201', '8.0.205', '8.0.400'])
+          );
+
+          const dotnetInstaller = new installer.DotnetCoreInstaller(
+            '8.0.100',
+            '',
+            undefined,
+            undefined,
+            false,
+            '8.0.100',
+            'feature'
+          );
+          const installedVersion = await dotnetInstaller.installDotnet();
+
+          expect(installedVersion).toBe('8.0.205');
+          expect(getExecOutputSpy).not.toHaveBeenCalled();
+        });
+
+        it('patch prefers the exact declared version', async () => {
+          readdirSyncSpy.mockReturnValue(makeDirents(['8.0.100', '8.0.105']));
+
+          const dotnetInstaller = new installer.DotnetCoreInstaller(
+            '8.0.100',
+            '',
+            undefined,
+            undefined,
+            false,
+            '8.0.100',
+            'patch'
+          );
+          const installedVersion = await dotnetInstaller.installDotnet();
+
+          expect(installedVersion).toBe('8.0.100');
+          expect(getExecOutputSpy).not.toHaveBeenCalled();
+        });
+
+        it('latestPatch takes the highest patch even when the declared version is installed', async () => {
+          readdirSyncSpy.mockReturnValue(makeDirents(['8.0.100', '8.0.105']));
+
+          const dotnetInstaller = new installer.DotnetCoreInstaller(
+            '8.0.1xx',
+            '',
+            undefined,
+            undefined,
+            false,
+            '8.0.100',
+            'latestPatch'
+          );
+          const installedVersion = await dotnetInstaller.installDotnet();
+
+          expect(installedVersion).toBe('8.0.105');
+          expect(getExecOutputSpy).not.toHaveBeenCalled();
+        });
+
+        it('minor prefers a higher band of the declared minor over a higher minor', async () => {
+          readdirSyncSpy.mockReturnValue(makeDirents(['8.0.400', '8.1.100']));
+
+          const dotnetInstaller = new installer.DotnetCoreInstaller(
+            '8.0.100',
+            '',
+            undefined,
+            undefined,
+            false,
+            '8.0.100',
+            'minor'
+          );
+          const installedVersion = await dotnetInstaller.installDotnet();
+
+          expect(installedVersion).toBe('8.0.400');
+          expect(getExecOutputSpy).not.toHaveBeenCalled();
+        });
+
+        it('minor rolls to the next higher minor, not the highest', async () => {
+          readdirSyncSpy.mockReturnValue(makeDirents(['8.1.100', '8.2.100']));
+
+          const dotnetInstaller = new installer.DotnetCoreInstaller(
+            '8.0.100',
+            '',
+            undefined,
+            undefined,
+            false,
+            '8.0.100',
+            'minor'
+          );
+          const installedVersion = await dotnetInstaller.installDotnet();
+
+          expect(installedVersion).toBe('8.1.100');
+          expect(getExecOutputSpy).not.toHaveBeenCalled();
+        });
+
+        it('major prefers the declared major over a higher major', async () => {
+          readdirSyncSpy.mockReturnValue(makeDirents(['8.0.400', '9.0.100']));
+
+          const dotnetInstaller = new installer.DotnetCoreInstaller(
+            '8.0.100',
+            '',
+            undefined,
+            undefined,
+            false,
+            '8.0.100',
+            'major'
+          );
+          const installedVersion = await dotnetInstaller.installDotnet();
+
+          expect(installedVersion).toBe('8.0.400');
+          expect(getExecOutputSpy).not.toHaveBeenCalled();
+        });
+
+        it('major rolls to the next higher major, not the highest', async () => {
+          readdirSyncSpy.mockReturnValue(makeDirents(['9.0.100', '10.0.100']));
+
+          const dotnetInstaller = new installer.DotnetCoreInstaller(
+            '8.0.100',
+            '',
+            undefined,
+            undefined,
+            false,
+            '8.0.100',
+            'major'
+          );
+          const installedVersion = await dotnetInstaller.installDotnet();
+
+          expect(installedVersion).toBe('9.0.100');
+          expect(getExecOutputSpy).not.toHaveBeenCalled();
+        });
+
+        it('latestFeature takes the highest band of the declared major.minor', async () => {
+          readdirSyncSpy.mockReturnValue(makeDirents(['8.0.105', '8.0.400']));
+
+          const dotnetInstaller = new installer.DotnetCoreInstaller(
+            '8.0',
+            '',
+            undefined,
+            undefined,
+            false,
+            '8.0.100',
+            'latestFeature'
+          );
+          const installedVersion = await dotnetInstaller.installDotnet();
+
+          expect(installedVersion).toBe('8.0.400');
+          expect(getExecOutputSpy).not.toHaveBeenCalled();
+        });
+
+        it('non-latest policies ignore dotnet-quality, as the online path does', async () => {
+          readdirSyncSpy.mockReturnValue(makeDirents(['8.0.105']));
+
+          const dotnetInstaller = new installer.DotnetCoreInstaller(
+            '8.0.100',
+            'preview',
+            undefined,
+            undefined,
+            false,
+            '8.0.100',
+            'patch'
+          );
+          const installedVersion = await dotnetInstaller.installDotnet();
+
+          expect(installedVersion).toBe('8.0.105');
+          expect(getExecOutputSpy).not.toHaveBeenCalled();
+        });
+
+        it('non-latest policies never prefer a prerelease over a GA build', async () => {
+          readdirSyncSpy.mockReturnValue(
+            makeDirents(['8.0.100', '9.0.100-rc.2'])
+          );
+
+          const dotnetInstaller = new installer.DotnetCoreInstaller(
+            '8.0.100',
+            'preview',
+            undefined,
+            undefined,
+            false,
+            '8.0.100',
+            'major'
+          );
+          const installedVersion = await dotnetInstaller.installDotnet();
+
+          expect(installedVersion).toBe('8.0.100');
+          expect(getExecOutputSpy).not.toHaveBeenCalled();
+        });
+
         it('disable requires the exact declared version', async () => {
           readdirSyncSpy.mockReturnValue(makeDirents(['8.0.200']));
           maxSatisfyingSpy.mockImplementation(() => '8.0.100');

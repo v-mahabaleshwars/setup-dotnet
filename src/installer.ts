@@ -457,17 +457,11 @@ export class DotnetCoreInstaller {
       const major = (this.dotnetChannel || '').trim().match(/^(\d+)/)?.[1];
       return major ? Number(major) >= QUALITY_INPUT_MINIMAL_MAJOR_TAG : true;
     }
+    if (semver.valid(this.version)) {
+      return false;
+    }
     const major = this.version.match(/^(\d+)/)?.[1];
     return major ? Number(major) >= QUALITY_INPUT_MINIMAL_MAJOR_TAG : false;
-  }
-
-  private findByMajor(candidates: string[], major: string): string | null {
-    return (
-      candidates.find(version => {
-        const parsed = semver.parse(version);
-        return parsed && parsed.major === Number(major);
-      }) ?? null
-    );
   }
 
   private findByMajorMinor(
@@ -506,6 +500,67 @@ export class DotnetCoreInstaller {
     );
   }
 
+  private static isInRollForwardScope(
+    version: string,
+    policy: string,
+    declared: semver.SemVer
+  ): boolean {
+    const parsed = semver.parse(version);
+    if (!parsed) {
+      return false;
+    }
+    switch (policy) {
+      case 'patch':
+      case 'latestPatch':
+        return (
+          parsed.major === declared.major &&
+          parsed.minor === declared.minor &&
+          Math.floor(parsed.patch / 100) === Math.floor(declared.patch / 100)
+        );
+      case 'feature':
+      case 'latestFeature':
+        return (
+          parsed.major === declared.major && parsed.minor === declared.minor
+        );
+      case 'minor':
+      case 'latestMinor':
+        return parsed.major === declared.major;
+      case 'major':
+      case 'latestMajor':
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  private static highestVersion(versions: string[]): string | null {
+    return versions.reduce<string | null>(
+      (best, version) => (!best || semver.gt(version, best) ? version : best),
+      null
+    );
+  }
+
+  private static nearestBandVersion(versions: string[]): string | null {
+    return versions.reduce<string | null>((best, version) => {
+      if (!best) {
+        return version;
+      }
+      const candidate = semver.parse(version);
+      const incumbent = semver.parse(best);
+      if (!candidate || !incumbent) {
+        return best;
+      }
+      const bandDelta =
+        candidate.major - incumbent.major ||
+        candidate.minor - incumbent.minor ||
+        Math.floor(candidate.patch / 100) - Math.floor(incumbent.patch / 100);
+      if (bandDelta !== 0) {
+        return bandDelta < 0 ? version : best;
+      }
+      return semver.gt(version, best) ? version : best;
+    }, null);
+  }
+
   private findByRollForward(
     candidates: string[],
     policy: string,
@@ -515,25 +570,26 @@ export class DotnetCoreInstaller {
     if (!declared) {
       return null;
     }
-    const major = String(declared.major);
-    const minor = String(declared.minor);
-    const band = String(Math.floor(declared.patch / 100));
+
+    const scoped = candidates.filter(version =>
+      DotnetCoreInstaller.isInRollForwardScope(version, policy, declared)
+    );
+    if (!scoped.length) {
+      return null;
+    }
 
     switch (policy) {
       case 'patch':
-      case 'latestPatch':
-        return this.findByFeatureBand(candidates, major, minor, band);
+        return (
+          scoped.find(version => semver.eq(version, declared)) ??
+          DotnetCoreInstaller.highestVersion(scoped)
+        );
       case 'feature':
-      case 'latestFeature':
-        return this.findByMajorMinor(candidates, major, minor);
       case 'minor':
-      case 'latestMinor':
-        return this.findByMajor(candidates, major);
       case 'major':
-      case 'latestMajor':
-        return candidates[0] ?? null;
+        return DotnetCoreInstaller.nearestBandVersion(scoped);
       default:
-        return null;
+        return DotnetCoreInstaller.highestVersion(scoped);
     }
   }
 

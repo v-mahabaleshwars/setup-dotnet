@@ -45420,14 +45420,11 @@ class DotnetCoreInstaller {
             const major = (this.dotnetChannel || '').trim().match(/^(\d+)/)?.[1];
             return major ? Number(major) >= QUALITY_INPUT_MINIMAL_MAJOR_TAG : true;
         }
+        if (semver_default().valid(this.version)) {
+            return false;
+        }
         const major = this.version.match(/^(\d+)/)?.[1];
         return major ? Number(major) >= QUALITY_INPUT_MINIMAL_MAJOR_TAG : false;
-    }
-    findByMajor(candidates, major) {
-        return (candidates.find(version => {
-            const parsed = semver_default().parse(version);
-            return parsed && parsed.major === Number(major);
-        }) ?? null);
     }
     findByMajorMinor(candidates, major, minor) {
         return (candidates.find(version => {
@@ -45446,29 +45443,71 @@ class DotnetCoreInstaller {
                 Math.floor(parsed.patch / 100) === Number(band));
         }) ?? null);
     }
+    static isInRollForwardScope(version, policy, declared) {
+        const parsed = semver_default().parse(version);
+        if (!parsed) {
+            return false;
+        }
+        switch (policy) {
+            case 'patch':
+            case 'latestPatch':
+                return (parsed.major === declared.major &&
+                    parsed.minor === declared.minor &&
+                    Math.floor(parsed.patch / 100) === Math.floor(declared.patch / 100));
+            case 'feature':
+            case 'latestFeature':
+                return (parsed.major === declared.major && parsed.minor === declared.minor);
+            case 'minor':
+            case 'latestMinor':
+                return parsed.major === declared.major;
+            case 'major':
+            case 'latestMajor':
+                return true;
+            default:
+                return false;
+        }
+    }
+    static highestVersion(versions) {
+        return versions.reduce((best, version) => (!best || semver_default().gt(version, best) ? version : best), null);
+    }
+    static nearestBandVersion(versions) {
+        return versions.reduce((best, version) => {
+            if (!best) {
+                return version;
+            }
+            const candidate = semver_default().parse(version);
+            const incumbent = semver_default().parse(best);
+            if (!candidate || !incumbent) {
+                return best;
+            }
+            const bandDelta = candidate.major - incumbent.major ||
+                candidate.minor - incumbent.minor ||
+                Math.floor(candidate.patch / 100) - Math.floor(incumbent.patch / 100);
+            if (bandDelta !== 0) {
+                return bandDelta < 0 ? version : best;
+            }
+            return semver_default().gt(version, best) ? version : best;
+        }, null);
+    }
     findByRollForward(candidates, policy, declaredVersion) {
         const declared = semver_default().parse(declaredVersion);
         if (!declared) {
             return null;
         }
-        const major = String(declared.major);
-        const minor = String(declared.minor);
-        const band = String(Math.floor(declared.patch / 100));
+        const scoped = candidates.filter(version => DotnetCoreInstaller.isInRollForwardScope(version, policy, declared));
+        if (!scoped.length) {
+            return null;
+        }
         switch (policy) {
             case 'patch':
-            case 'latestPatch':
-                return this.findByFeatureBand(candidates, major, minor, band);
+                return (scoped.find(version => semver_default().eq(version, declared)) ??
+                    DotnetCoreInstaller.highestVersion(scoped));
             case 'feature':
-            case 'latestFeature':
-                return this.findByMajorMinor(candidates, major, minor);
             case 'minor':
-            case 'latestMinor':
-                return this.findByMajor(candidates, major);
             case 'major':
-            case 'latestMajor':
-                return candidates[0] ?? null;
+                return DotnetCoreInstaller.nearestBandVersion(scoped);
             default:
-                return null;
+                return DotnetCoreInstaller.highestVersion(scoped);
         }
     }
     filterByQuality(allowed) {
@@ -106796,11 +106835,12 @@ async function run() {
         // Proxy, auth, (etc) are still set up, even if no version is identified
         //
         const versions = getMultilineInput('dotnet-version');
+        const explicitVersions = new Set(versions);
         const globalJsonConstraints = new Map();
         const addVersionFromGlobalJson = (globalJsonPath) => {
             const { version, minimumVersion, rollForward } = getVersionFromGlobalJson(globalJsonPath);
             versions.push(version);
-            if (minimumVersion) {
+            if (minimumVersion && !explicitVersions.has(version)) {
                 globalJsonConstraints.set(version, { minimumVersion, rollForward });
             }
         };
@@ -106930,6 +106970,7 @@ const ROLL_FORWARD_POLICIES = [
     'latestMinor',
     'latestMajor'
 ];
+const FULL_SDK_VERSION_PATTERN = /^\d+\.\d+\.[1-9]\d{2,}$/;
 function getVersionFromGlobalJson(globalJsonPath) {
     let version = '';
     let minimumVersion;
@@ -106947,8 +106988,7 @@ function getVersionFromGlobalJson(globalJsonPath) {
         version = globalJson.sdk.version;
         const rollForward = globalJson.sdk.rollForward;
         if (rollForward && !semver_default().prerelease(version)) {
-            const versionPattern = /^\d+\.\d+\.[1-9]\d{2,}$/;
-            if (!versionPattern.test(version)) {
+            if (!FULL_SDK_VERSION_PATTERN.test(version)) {
                 throw new Error(`Version '${version}' is not valid for the 'sdk.version' value in global.json. ` +
                     `When 'rollForward' is specified, a full SDK version is required. ` +
                     `See: https://learn.microsoft.com/en-us/dotnet/core/tools/global-json`);
@@ -106973,6 +107013,12 @@ function getVersionFromGlobalJson(globalJsonPath) {
                 minimumVersion = globalJson.sdk.version;
                 rollForwardPolicy = rollForward;
             }
+        }
+        else if (!rollForward &&
+            !semver_default().prerelease(version) &&
+            FULL_SDK_VERSION_PATTERN.test(version)) {
+            minimumVersion = version;
+            rollForwardPolicy = 'patch';
         }
     }
     return { version, minimumVersion, rollForward: rollForwardPolicy };

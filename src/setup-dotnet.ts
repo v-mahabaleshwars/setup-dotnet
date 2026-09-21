@@ -56,6 +56,7 @@ export async function run() {
     // Proxy, auth, (etc) are still set up, even if no version is identified
     //
     const versions = core.getMultilineInput('dotnet-version');
+    const explicitVersions = new Set(versions);
     const globalJsonConstraints = new Map<
       string,
       {minimumVersion: string; rollForward?: string}
@@ -64,7 +65,7 @@ export async function run() {
       const {version, minimumVersion, rollForward} =
         getVersionFromGlobalJson(globalJsonPath);
       versions.push(version);
-      if (minimumVersion) {
+      if (minimumVersion && !explicitVersions.has(version)) {
         globalJsonConstraints.set(version, {minimumVersion, rollForward});
       }
     };
@@ -258,6 +259,8 @@ const ROLL_FORWARD_POLICIES = [
   'latestMajor'
 ];
 
+const FULL_SDK_VERSION_PATTERN = /^\d+\.\d+\.[1-9]\d{2,}$/;
+
 function getVersionFromGlobalJson(globalJsonPath: string): GlobalJsonVersion {
   let version = '';
   let minimumVersion: string | undefined;
@@ -275,8 +278,7 @@ function getVersionFromGlobalJson(globalJsonPath: string): GlobalJsonVersion {
     version = globalJson.sdk.version;
     const rollForward = globalJson.sdk.rollForward;
     if (rollForward && !semver.prerelease(version)) {
-      const versionPattern = /^\d+\.\d+\.[1-9]\d{2,}$/;
-      if (!versionPattern.test(version)) {
+      if (!FULL_SDK_VERSION_PATTERN.test(version)) {
         throw new Error(
           `Version '${version}' is not valid for the 'sdk.version' value in global.json. ` +
             `When 'rollForward' is specified, a full SDK version is required. ` +
@@ -309,6 +311,13 @@ function getVersionFromGlobalJson(globalJsonPath: string): GlobalJsonVersion {
         minimumVersion = globalJson.sdk.version;
         rollForwardPolicy = rollForward;
       }
+    } else if (
+      !rollForward &&
+      !semver.prerelease(version) &&
+      FULL_SDK_VERSION_PATTERN.test(version)
+    ) {
+      minimumVersion = version;
+      rollForwardPolicy = 'patch';
     }
   }
   return {version, minimumVersion, rollForward: rollForwardPolicy};

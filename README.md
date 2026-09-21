@@ -311,14 +311,12 @@ steps:
 
 ## Using the `check-latest` input
 
-By default (`check-latest: true`) the action resolves and installs the latest available version that satisfies the requested version spec online. This matches the historical behavior, so existing workflows are unaffected.
-
-When `check-latest: false`, the action first looks for an SDK that is already installed under the [`DOTNET_INSTALL_DIR`](#environment-variables) directory. If a locally installed SDK satisfies the request, it is reused and **all network calls needed to resolve and install the SDK are skipped** (including the runtime pre-install), which is useful for air-gapped or preloaded runners. Otherwise the action falls back to the normal online installation.
+By default (`check-latest: true`) the action resolves and installs the latest version matching the request online, which is the historical behavior. With `check-latest: false` it first looks for an SDK already installed under [`DOTNET_INSTALL_DIR`](#environment-variables) and reuses it, skipping every network call — useful for air-gapped or preloaded runners. If none matches, it installs online as usual.
 
 ```yaml
 steps:
 - uses: actions/checkout@v7
-- name: Reuse a preinstalled SDK when available (offline-friendly)
+- name: Reuse a preinstalled SDK when available
   uses: actions/setup-dotnet@v6
   with:
     dotnet-version: '8.0.x'
@@ -326,23 +324,13 @@ steps:
 - run: dotnet build <my project>
 ```
 
-A locally installed SDK is reused only when all of the following hold, otherwise the action installs online:
+An installed SDK is reused only when it matches the requested spec (`A.B.C`, `A.B`, `A.B.x`, `A.B.Cxx`, `A`, `A.x` or `latest`; `x`, `X` and `*` interchange except in a feature band, which is lowercase `Cxx`), satisfies `dotnet-quality`, is not older than the `sdk.version` declared in `global.json`, and sits next to a runnable `dotnet` executable. As online, `dotnet-quality` is ignored for a full `A.B.C` request, so such a request always resolves to a GA SDK. Cross-architecture requests, `latest` with an `LTS` or `STS` channel, and a bare wildcard always install online.
 
-- it matches the requested version spec (`A.B.C`, `A.B`, `A.B.x`, `A.B.Cxx`, `A`, `A.x` or `latest`). In the wildcard position, `x`, `X` and `*` are equivalent;
-- it is not older than the `sdk.version` declared in `global.json`, because `rollForward` only ever rolls forward;
-- it matches the requested `dotnet-quality` (`preview` and `daily` require a prerelease SDK, any other value requires a GA one). An exact version such as `8.0.404` is matched as-is, so `dotnet-quality` does not apply to it;
-- the `dotnet` executable is present next to the SDK folders and is runnable;
-- the requested `architecture` is the runner's native one. Cross-architecture requests always install online, to avoid reusing an SDK built for the wrong architecture.
-
-When `global.json` declares a `rollForward` policy, the highest locally installed SDK the policy accepts is reused: any major for `major` and `latestMajor`, any minor of the declared major for `minor` and `latestMinor`, any feature band of the declared major and minor for `feature` and `latestFeature`, and any patch in the declared band for `patch` and `latestPatch`. `disable` and a prerelease `sdk.version` require the exact declared version.
-
-Requests that need the .NET release metadata always install online: `dotnet-version: latest` with `dotnet-channel: LTS` or `STS`, and a bare wildcard (`x`, `X` or `*`).
+When the request comes from `global.json`, the SDK is picked the way the .NET resolver picks one: `latestPatch`, `latestFeature`, `latestMinor` and `latestMajor` take the **highest** SDK the policy allows, while `feature`, `minor` and `major` roll forward to the **nearest** higher feature band, minor or major and then take its latest patch. `patch` — the default when `rollForward` is omitted — prefers the declared version, otherwise the latest patch in its band. `disable` and a prerelease `sdk.version` require an exact match, and `allowPrerelease` is not used: `dotnet-quality` is the only prerelease control.
 
 ### Setting `check-latest` from the environment
 
-When the input is not set, the action reads the `DOTNET_CHECK_LATEST` environment variable instead (`true` or `false`, case-insensitive; an unsupported value is warned about and ignored). This covers workflows you cannot edit to add a `check-latest` input.
-
-Setting `DOTNET_CHECK_LATEST` in the environment of a self-hosted runner, together with SDKs preinstalled under [`DOTNET_INSTALL_DIR`](#environment-variables), lets such workflows run without reaching `aka.ms`, `builds.dotnet.microsoft.com` or `ci.dot.net`. A runner-level variable applies to every job scheduled on that runner, so a dedicated runner is recommended; any workflow can still override it with an explicit `check-latest` input.
+When the input is not set, the action reads the `DOTNET_CHECK_LATEST` environment variable (`true` or `false`, case-insensitive; an unsupported value warns and is ignored), which covers workflows you cannot edit. Setting it on a self-hosted runner alongside SDKs preinstalled under [`DOTNET_INSTALL_DIR`](#environment-variables) lets those workflows run without reaching `aka.ms`, `builds.dotnet.microsoft.com` or `ci.dot.net`. It applies to every job on that runner, so a dedicated runner is recommended; any workflow can still override it with an explicit `check-latest` input.
 
 # Outputs and environment variables
 
