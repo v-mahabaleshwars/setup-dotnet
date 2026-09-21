@@ -497,5 +497,64 @@ describe('setup-dotnet tests', () => {
       expect(capturedVersion).toBe('8.0');
       expect(capturedMinimumVersion).toBe('8.0.400');
     });
+
+    it('should pass non-latest rollForward policies to DotnetCoreInstaller', async () => {
+      inputs['dotnet-version'] = [];
+      inputs['dotnet-quality'] = '';
+      inputs['dotnet-channel'] = '';
+      inputs['architecture'] = '';
+      inputs['check-latest'] = 'false';
+      inputs['global-json-file'] = 'global.json';
+
+      existsSyncSpy.mockReturnValue(true);
+      readFileSyncSpy.mockReturnValue(
+        JSON.stringify({sdk: {version: '8.0.100', rollForward: 'feature'}})
+      );
+
+      let capturedVersion: string | undefined;
+      let capturedMinimumVersion: string | undefined;
+      let capturedRollForward: string | undefined;
+      installDotnetSpy.mockImplementation(function (this: any) {
+        capturedVersion = this.version;
+        capturedMinimumVersion = this.minimumVersion;
+        capturedRollForward = this.rollForward;
+        return Promise.resolve('8.0.200');
+      });
+
+      await setup.run();
+      inputs['global-json-file'] = '';
+
+      expect(capturedVersion).toBe('8.0.100');
+      expect(capturedMinimumVersion).toBe('8.0.100');
+      expect(capturedRollForward).toBe('feature');
+    });
+
+    it('should not set a rollForward policy for disable', async () => {
+      inputs['dotnet-version'] = [];
+      inputs['dotnet-quality'] = '';
+      inputs['dotnet-channel'] = '';
+      inputs['architecture'] = '';
+      inputs['check-latest'] = 'false';
+      inputs['global-json-file'] = 'global.json';
+
+      existsSyncSpy.mockReturnValue(true);
+      readFileSyncSpy.mockReturnValue(
+        JSON.stringify({sdk: {version: '8.0.100', rollForward: 'disable'}})
+      );
+
+      let capturedMinimumVersion: string | undefined;
+      let capturedRollForward: string | undefined;
+      installDotnetSpy.mockImplementation(function (this: any) {
+        capturedMinimumVersion = this.minimumVersion;
+        capturedRollForward = this.rollForward;
+        return Promise.resolve('8.0.100');
+      });
+
+      await setup.run();
+      inputs['global-json-file'] = '';
+
+      expect(capturedMinimumVersion).toBeUndefined();
+      expect(capturedRollForward).toBeUndefined();
+    });
   });
 });

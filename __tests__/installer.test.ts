@@ -37,12 +37,23 @@ jest.unstable_mockModule('fs', () => {
   const chmodSync = jest.fn();
   const readdirSync = jest.fn();
   const existsSync = jest.fn(() => true);
+  const statSync = jest.fn(() => ({isFile: () => true}));
+  const accessSync = jest.fn();
   return {
     ...actual,
     chmodSync,
     readdirSync,
     existsSync,
-    default: {...actual, chmodSync, readdirSync, existsSync}
+    statSync,
+    accessSync,
+    default: {
+      ...actual,
+      chmodSync,
+      readdirSync,
+      existsSync,
+      statSync,
+      accessSync
+    }
   };
 });
 
@@ -521,7 +532,15 @@ describe('installer tests', () => {
 
     describe('check-latest: false (local SDK reuse) tests', () => {
       const readdirSyncSpy = fs.readdirSync as unknown as jest.Mock;
-      const existsSyncSpy = fs.existsSync as unknown as jest.Mock;
+      const statSyncSpy = fs.statSync as unknown as jest.Mock;
+      const accessSyncSpy = fs.accessSync as unknown as jest.Mock;
+
+      const asFile = {isFile: () => true};
+      const muxerName = IS_WINDOWS ? 'dotnet.exe' : 'dotnet';
+      const isMuxer = (target: unknown) => String(target).endsWith(muxerName);
+      const throwEnoent = () => {
+        throw new Error('ENOENT');
+      };
 
       const makeDirents = (names: string[]): any =>
         names.map(name => ({
@@ -546,12 +565,14 @@ describe('installer tests', () => {
             stderr: ''
           })
         );
-        existsSyncSpy.mockReturnValue(true);
+        statSyncSpy.mockReturnValue(asFile);
+        accessSyncSpy.mockImplementation(() => undefined);
       });
 
       afterEach(() => {
         readdirSyncSpy.mockReset();
-        existsSyncSpy.mockReset();
+        statSyncSpy.mockReset();
+        accessSyncSpy.mockReset();
       });
 
       it('reuses a locally installed pinned SDK and skips all install scripts', async () => {
@@ -840,7 +861,57 @@ describe('installer tests', () => {
 
       it('installs online when the dotnet muxer is missing', async () => {
         readdirSyncSpy.mockReturnValue(makeDirents(['8.0.412']));
-        existsSyncSpy.mockReturnValue(false);
+        statSyncSpy.mockImplementation((target: string) => {
+          if (isMuxer(target)) {
+            throwEnoent();
+          }
+          return asFile;
+        });
+        maxSatisfyingSpy.mockImplementation(() => '8.0.412');
+
+        const dotnetInstaller = new installer.DotnetCoreInstaller(
+          '8.0.x',
+          '',
+          undefined,
+          undefined,
+          false
+        );
+        await dotnetInstaller.installDotnet();
+
+        expect(getExecOutputSpy).toHaveBeenCalledTimes(2);
+      });
+
+      const itOnPosix = IS_WINDOWS ? it.skip : it;
+
+      itOnPosix(
+        'installs online when the dotnet muxer is not executable',
+        async () => {
+          readdirSyncSpy.mockReturnValue(makeDirents(['8.0.412']));
+          accessSyncSpy.mockImplementation((target: string) => {
+            if (isMuxer(target)) {
+              throw new Error('EACCES');
+            }
+          });
+          maxSatisfyingSpy.mockImplementation(() => '8.0.412');
+
+          const dotnetInstaller = new installer.DotnetCoreInstaller(
+            '8.0.x',
+            '',
+            undefined,
+            undefined,
+            false
+          );
+          await dotnetInstaller.installDotnet();
+
+          expect(getExecOutputSpy).toHaveBeenCalledTimes(2);
+        }
+      );
+
+      it('installs online when the dotnet muxer path is a directory', async () => {
+        readdirSyncSpy.mockReturnValue(makeDirents(['8.0.412']));
+        statSyncSpy.mockImplementation((target: string) =>
+          isMuxer(target) ? {isFile: () => false} : asFile
+        );
         maxSatisfyingSpy.mockImplementation(() => '8.0.412');
 
         const dotnetInstaller = new installer.DotnetCoreInstaller(
@@ -978,9 +1049,12 @@ describe('installer tests', () => {
 
       it('ignores an sdk folder that does not contain an SDK', async () => {
         readdirSyncSpy.mockReturnValue(makeDirents(['8.0.412']));
-        existsSyncSpy.mockImplementation(
-          (target: string) => !target.includes('dotnet.dll')
-        );
+        statSyncSpy.mockImplementation((target: string) => {
+          if (String(target).includes('dotnet.dll')) {
+            throwEnoent();
+          }
+          return asFile;
+        });
         maxSatisfyingSpy.mockImplementation(() => '8.0.412');
 
         const dotnetInstaller = new installer.DotnetCoreInstaller(
@@ -1023,7 +1097,8 @@ describe('installer tests', () => {
             undefined,
             undefined,
             false,
-            '8.0.100'
+            '8.0.100',
+            'latestMajor'
           );
           const installedVersion = await dotnetInstaller.installDotnet();
 
@@ -1040,7 +1115,8 @@ describe('installer tests', () => {
             undefined,
             undefined,
             false,
-            '8.0.100'
+            '8.0.100',
+            'latestMajor'
           );
           const installedVersion = await dotnetInstaller.installDotnet();
 
@@ -1058,7 +1134,8 @@ describe('installer tests', () => {
             undefined,
             undefined,
             false,
-            '8.0.412'
+            '8.0.412',
+            'latestMajor'
           );
           await dotnetInstaller.installDotnet();
 
@@ -1075,7 +1152,8 @@ describe('installer tests', () => {
             undefined,
             undefined,
             false,
-            '8.0.100'
+            '8.0.100',
+            'latestMajor'
           );
           await dotnetInstaller.installDotnet();
 
@@ -1091,7 +1169,8 @@ describe('installer tests', () => {
             undefined,
             undefined,
             false,
-            '8.1.100'
+            '8.1.100',
+            'latestMinor'
           );
           const installedVersion = await dotnetInstaller.installDotnet();
 
@@ -1109,7 +1188,8 @@ describe('installer tests', () => {
             undefined,
             undefined,
             false,
-            '8.1.100'
+            '8.1.100',
+            'latestMinor'
           );
           await dotnetInstaller.installDotnet();
 
@@ -1126,7 +1206,8 @@ describe('installer tests', () => {
             undefined,
             undefined,
             false,
-            '8.1.100'
+            '8.1.100',
+            'latestMinor'
           );
           await dotnetInstaller.installDotnet();
 
@@ -1142,7 +1223,8 @@ describe('installer tests', () => {
             undefined,
             undefined,
             false,
-            '8.0.200'
+            '8.0.200',
+            'latestFeature'
           );
           const installedVersion = await dotnetInstaller.installDotnet();
 
@@ -1159,12 +1241,137 @@ describe('installer tests', () => {
             undefined,
             undefined,
             false,
-            '8.0.200'
+            '8.0.200',
+            'latestPatch'
           );
           const installedVersion = await dotnetInstaller.installDotnet();
 
           expect(installedVersion).toBe('8.0.205');
           expect(getExecOutputSpy).not.toHaveBeenCalled();
+        });
+
+        it('feature reuses a higher feature band of the declared major.minor', async () => {
+          readdirSyncSpy.mockReturnValue(makeDirents(['8.0.200']));
+
+          const dotnetInstaller = new installer.DotnetCoreInstaller(
+            '8.0.100',
+            '',
+            undefined,
+            undefined,
+            false,
+            '8.0.100',
+            'feature'
+          );
+          const installedVersion = await dotnetInstaller.installDotnet();
+
+          expect(installedVersion).toBe('8.0.200');
+          expect(getExecOutputSpy).not.toHaveBeenCalled();
+        });
+
+        it('feature does not cross into another minor', async () => {
+          readdirSyncSpy.mockReturnValue(makeDirents(['8.1.100']));
+          maxSatisfyingSpy.mockImplementation(() => '8.0.100');
+
+          const dotnetInstaller = new installer.DotnetCoreInstaller(
+            '8.0.100',
+            '',
+            undefined,
+            undefined,
+            false,
+            '8.0.100',
+            'feature'
+          );
+          await dotnetInstaller.installDotnet();
+
+          expect(getExecOutputSpy).toHaveBeenCalledTimes(2);
+        });
+
+        it('patch stays inside the declared feature band', async () => {
+          readdirSyncSpy.mockReturnValue(makeDirents(['8.0.105', '8.0.200']));
+
+          const dotnetInstaller = new installer.DotnetCoreInstaller(
+            '8.0.100',
+            '',
+            undefined,
+            undefined,
+            false,
+            '8.0.100',
+            'patch'
+          );
+          const installedVersion = await dotnetInstaller.installDotnet();
+
+          expect(installedVersion).toBe('8.0.105');
+          expect(getExecOutputSpy).not.toHaveBeenCalled();
+        });
+
+        it('minor reuses a higher minor of the declared major', async () => {
+          readdirSyncSpy.mockReturnValue(makeDirents(['8.1.200']));
+
+          const dotnetInstaller = new installer.DotnetCoreInstaller(
+            '8.0.100',
+            '',
+            undefined,
+            undefined,
+            false,
+            '8.0.100',
+            'minor'
+          );
+          const installedVersion = await dotnetInstaller.installDotnet();
+
+          expect(installedVersion).toBe('8.1.200');
+          expect(getExecOutputSpy).not.toHaveBeenCalled();
+        });
+
+        it('major reuses a higher major', async () => {
+          readdirSyncSpy.mockReturnValue(makeDirents(['9.0.101']));
+
+          const dotnetInstaller = new installer.DotnetCoreInstaller(
+            '8.0.100',
+            '',
+            undefined,
+            undefined,
+            false,
+            '8.0.100',
+            'major'
+          );
+          const installedVersion = await dotnetInstaller.installDotnet();
+
+          expect(installedVersion).toBe('9.0.101');
+          expect(getExecOutputSpy).not.toHaveBeenCalled();
+        });
+
+        it('disable requires the exact declared version', async () => {
+          readdirSyncSpy.mockReturnValue(makeDirents(['8.0.200']));
+          maxSatisfyingSpy.mockImplementation(() => '8.0.100');
+
+          const dotnetInstaller = new installer.DotnetCoreInstaller(
+            '8.0.100',
+            '',
+            undefined,
+            undefined,
+            false
+          );
+          await dotnetInstaller.installDotnet();
+
+          expect(getExecOutputSpy).toHaveBeenCalledTimes(2);
+        });
+
+        it('roll-forward policies never select below the declared version', async () => {
+          readdirSyncSpy.mockReturnValue(makeDirents(['8.0.100']));
+          maxSatisfyingSpy.mockImplementation(() => '8.0.200');
+
+          const dotnetInstaller = new installer.DotnetCoreInstaller(
+            '8.0.200',
+            '',
+            undefined,
+            undefined,
+            false,
+            '8.0.200',
+            'major'
+          );
+          await dotnetInstaller.installDotnet();
+
+          expect(getExecOutputSpy).toHaveBeenCalledTimes(2);
         });
 
         it('installs online for an empty version without a rollForward floor', async () => {

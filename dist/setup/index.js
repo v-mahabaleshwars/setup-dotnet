@@ -45351,6 +45351,29 @@ function normalizeArch(arch) {
             return arch.toLowerCase();
     }
 }
+function isFile(filePath) {
+    try {
+        return (0,external_fs_namespaceObject.statSync)(filePath).isFile();
+    }
+    catch {
+        return false;
+    }
+}
+function isExecutableFile(filePath) {
+    if (!isFile(filePath)) {
+        return false;
+    }
+    if (utils_IS_WINDOWS) {
+        return true;
+    }
+    try {
+        (0,external_fs_namespaceObject.accessSync)(filePath, external_fs_namespaceObject.constants.X_OK);
+        return true;
+    }
+    catch {
+        return false;
+    }
+}
 class DotnetCoreInstaller {
     version;
     quality;
@@ -45358,17 +45381,19 @@ class DotnetCoreInstaller {
     dotnetChannel;
     checkLatest;
     minimumVersion;
+    rollForward;
     static FeatureBandSyntax = /^(\d+)\.(\d+)\.(\d)xx$/;
     static {
         DotnetInstallDir.setEnvironmentVariable();
     }
-    constructor(version, quality, architecture, dotnetChannel, checkLatest = true, minimumVersion) {
+    constructor(version, quality, architecture, dotnetChannel, checkLatest = true, minimumVersion, rollForward) {
         this.version = version;
         this.quality = quality;
         this.architecture = architecture;
         this.dotnetChannel = dotnetChannel;
         this.checkLatest = checkLatest;
         this.minimumVersion = minimumVersion;
+        this.rollForward = rollForward;
         this.version = version.trim();
     }
     getInstalledSdkVersions() {
@@ -45378,7 +45403,7 @@ class DotnetCoreInstaller {
                 .filter(entry => entry.isDirectory() || entry.isSymbolicLink())
                 .map(entry => entry.name)
                 .filter(name => semver_default().valid(name) !== null)
-                .filter(name => (0,external_fs_namespaceObject.existsSync)(external_path_default().join(sdkDir, name, 'dotnet.dll')));
+                .filter(name => isFile(external_path_default().join(sdkDir, name, 'dotnet.dll')));
             core_debug(`Locally installed .NET SDKs in '${sdkDir}': ${versions.join(', ') || '<none>'}`);
             return versions;
         }
@@ -45388,7 +45413,7 @@ class DotnetCoreInstaller {
         }
     }
     hasDotnetMuxer() {
-        return (0,external_fs_namespaceObject.existsSync)(external_path_default().join(DotnetInstallDir.dirPath, utils_IS_WINDOWS ? 'dotnet.exe' : 'dotnet'));
+        return isExecutableFile(external_path_default().join(DotnetInstallDir.dirPath, utils_IS_WINDOWS ? 'dotnet.exe' : 'dotnet'));
     }
     qualityApplies() {
         if (this.version.toLowerCase() === 'latest') {
@@ -45421,6 +45446,40 @@ class DotnetCoreInstaller {
                 Math.floor(parsed.patch / 100) === Number(band));
         }) ?? null);
     }
+    findByRollForward(candidates, policy, declaredVersion) {
+        const declared = semver_default().parse(declaredVersion);
+        if (!declared) {
+            return null;
+        }
+        const major = String(declared.major);
+        const minor = String(declared.minor);
+        const band = String(Math.floor(declared.patch / 100));
+        switch (policy) {
+            case 'patch':
+            case 'latestPatch':
+                return this.findByFeatureBand(candidates, major, minor, band);
+            case 'feature':
+            case 'latestFeature':
+                return this.findByMajorMinor(candidates, major, minor);
+            case 'minor':
+            case 'latestMinor':
+                return this.findByMajor(candidates, major);
+            case 'major':
+            case 'latestMajor':
+                return candidates[0] ?? null;
+            default:
+                return null;
+        }
+    }
+    filterByQuality(allowed) {
+        const wantsPrerelease = ['preview', 'daily'].includes((this.quality || '').toLowerCase()) &&
+            this.qualityApplies();
+        return allowed
+            .filter(version => wantsPrerelease
+            ? semver_default().prerelease(version) !== null
+            : semver_default().prerelease(version) === null)
+            .sort((semver_default()).rcompare);
+    }
     findLocalSdkVersion() {
         const installed = this.getInstalledSdkVersions();
         if (!installed.length) {
@@ -45438,6 +45497,9 @@ class DotnetCoreInstaller {
             core_debug(`No locally installed .NET SDK satisfies the global.json minimum version '${minimumVersion}'.`);
             return null;
         }
+        if (this.rollForward && minimumVersion) {
+            return this.findByRollForward(this.filterByQuality(allowed), this.rollForward, minimumVersion);
+        }
         if (semver_default().valid(this.version)) {
             return allowed.find(version => version === this.version) ?? null;
         }
@@ -45447,26 +45509,11 @@ class DotnetCoreInstaller {
             core_debug(`The requested version '${this.version}' is not a valid version spec. Locally installed SDKs are ignored.`);
             return null;
         }
-        const wantsPrerelease = ['preview', 'daily'].includes((this.quality || '').toLowerCase()) &&
-            this.qualityApplies();
-        const candidates = allowed
-            .filter(version => wantsPrerelease
-            ? semver_default().prerelease(version) !== null
-            : semver_default().prerelease(version) === null)
-            .sort((semver_default()).rcompare);
+        const candidates = this.filterByQuality(allowed);
         if (!candidates.length) {
             return null;
         }
         const input = this.version.toLowerCase();
-        if (minimumVersion) {
-            if (!input) {
-                return candidates[0];
-            }
-            const rollForwardMajor = input.match(/^(\d+)$/)?.[1];
-            if (rollForwardMajor) {
-                return this.findByMajor(candidates, rollForwardMajor);
-            }
-        }
         if (input === 'latest') {
             const channel = (this.dotnetChannel || '').trim();
             if (!channel) {
@@ -106749,12 +106796,12 @@ async function run() {
         // Proxy, auth, (etc) are still set up, even if no version is identified
         //
         const versions = getMultilineInput('dotnet-version');
-        const minimumVersions = new Map();
+        const globalJsonConstraints = new Map();
         const addVersionFromGlobalJson = (globalJsonPath) => {
-            const { version, minimumVersion } = getVersionFromGlobalJson(globalJsonPath);
+            const { version, minimumVersion, rollForward } = getVersionFromGlobalJson(globalJsonPath);
             versions.push(version);
             if (minimumVersion) {
-                minimumVersions.set(version, minimumVersion);
+                globalJsonConstraints.set(version, { minimumVersion, rollForward });
             }
         };
         const installedDotnetVersions = [];
@@ -106802,7 +106849,8 @@ async function run() {
             let dotnetInstaller;
             const uniqueVersions = new Set(versions.map(v => (v.toLowerCase() === 'latest' ? 'latest' : v)));
             for (const version of uniqueVersions) {
-                dotnetInstaller = new DotnetCoreInstaller(version, quality, architecture, version.toLowerCase() === 'latest' ? dotnetChannel : undefined, checkLatest, minimumVersions.get(version));
+                const constraint = globalJsonConstraints.get(version);
+                dotnetInstaller = new DotnetCoreInstaller(version, quality, architecture, version.toLowerCase() === 'latest' ? dotnetChannel : undefined, checkLatest, constraint?.minimumVersion, constraint?.rollForward);
                 const installedVersion = await dotnetInstaller.installDotnet();
                 installedDotnetVersions.push(installedVersion);
             }
@@ -106872,9 +106920,20 @@ function getCheckLatestInput() {
     }
     return true;
 }
+const ROLL_FORWARD_POLICIES = [
+    'patch',
+    'feature',
+    'minor',
+    'major',
+    'latestPatch',
+    'latestFeature',
+    'latestMinor',
+    'latestMajor'
+];
 function getVersionFromGlobalJson(globalJsonPath) {
     let version = '';
     let minimumVersion;
+    let rollForwardPolicy;
     const globalJson = json5_lib_default().parse(
     // .trim() is necessary to strip BOM https://github.com/nodejs/node/issues/20649
     external_fs_namespaceObject.readFileSync(globalJsonPath, { encoding: 'utf8' }).trim(), 
@@ -106910,12 +106969,13 @@ function getVersionFromGlobalJson(globalJsonPath) {
                     version = `${major}.${minor}.${feature}xx`;
                     break;
             }
-            if (version !== globalJson.sdk.version) {
+            if (ROLL_FORWARD_POLICIES.includes(rollForward)) {
                 minimumVersion = globalJson.sdk.version;
+                rollForwardPolicy = rollForward;
             }
         }
     }
-    return { version, minimumVersion };
+    return { version, minimumVersion, rollForward: rollForwardPolicy };
 }
 function outputInstalledVersion(installedVersions, globalJsonFileInput) {
     if (!installedVersions.length) {

@@ -56,13 +56,16 @@ export async function run() {
     // Proxy, auth, (etc) are still set up, even if no version is identified
     //
     const versions = core.getMultilineInput('dotnet-version');
-    const minimumVersions = new Map<string, string>();
+    const globalJsonConstraints = new Map<
+      string,
+      {minimumVersion: string; rollForward?: string}
+    >();
     const addVersionFromGlobalJson = (globalJsonPath: string) => {
-      const {version, minimumVersion} =
+      const {version, minimumVersion, rollForward} =
         getVersionFromGlobalJson(globalJsonPath);
       versions.push(version);
       if (minimumVersion) {
-        minimumVersions.set(version, minimumVersion);
+        globalJsonConstraints.set(version, {minimumVersion, rollForward});
       }
     };
     const installedDotnetVersions: (string | null)[] = [];
@@ -129,13 +132,15 @@ export async function run() {
         versions.map(v => (v.toLowerCase() === 'latest' ? 'latest' : v))
       );
       for (const version of uniqueVersions) {
+        const constraint = globalJsonConstraints.get(version);
         dotnetInstaller = new DotnetCoreInstaller(
           version,
           quality,
           architecture,
           version.toLowerCase() === 'latest' ? dotnetChannel : undefined,
           checkLatest,
-          minimumVersions.get(version)
+          constraint?.minimumVersion,
+          constraint?.rollForward
         );
         const installedVersion = await dotnetInstaller.installDotnet();
         installedDotnetVersions.push(installedVersion);
@@ -239,11 +244,24 @@ function getCheckLatestInput(): boolean {
 interface GlobalJsonVersion {
   version: string;
   minimumVersion?: string;
+  rollForward?: string;
 }
+
+const ROLL_FORWARD_POLICIES = [
+  'patch',
+  'feature',
+  'minor',
+  'major',
+  'latestPatch',
+  'latestFeature',
+  'latestMinor',
+  'latestMajor'
+];
 
 function getVersionFromGlobalJson(globalJsonPath: string): GlobalJsonVersion {
   let version = '';
   let minimumVersion: string | undefined;
+  let rollForwardPolicy: string | undefined;
   const globalJson = JSON5.parse(
     // .trim() is necessary to strip BOM https://github.com/nodejs/node/issues/20649
     fs.readFileSync(globalJsonPath, {encoding: 'utf8'}).trim(),
@@ -287,12 +305,13 @@ function getVersionFromGlobalJson(globalJsonPath: string): GlobalJsonVersion {
           break;
       }
 
-      if (version !== globalJson.sdk.version) {
+      if (ROLL_FORWARD_POLICIES.includes(rollForward)) {
         minimumVersion = globalJson.sdk.version;
+        rollForwardPolicy = rollForward;
       }
     }
   }
-  return {version, minimumVersion};
+  return {version, minimumVersion, rollForward: rollForwardPolicy};
 }
 
 function outputInstalledVersion(

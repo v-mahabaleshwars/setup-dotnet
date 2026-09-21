@@ -331,10 +331,10 @@ A locally installed SDK is reused only when all of the following hold, otherwise
 - it matches the requested version spec (`A.B.C`, `A.B`, `A.B.x`, `A.B.Cxx`, `A`, `A.x` or `latest`). In the wildcard position, `x`, `X` and `*` are equivalent;
 - it is not older than the `sdk.version` declared in `global.json`, because `rollForward` only ever rolls forward;
 - it matches the requested `dotnet-quality` (`preview` and `daily` require a prerelease SDK, any other value requires a GA one). An exact version such as `8.0.404` is matched as-is, so `dotnet-quality` does not apply to it;
-- the `dotnet` executable is present next to the SDK folders;
+- the `dotnet` executable is present next to the SDK folders and is runnable;
 - the requested `architecture` is the runner's native one. Cross-architecture requests always install online, to avoid reusing an SDK built for the wrong architecture.
 
-When `global.json` declares a `rollForward` policy, the highest locally installed SDK the policy accepts is reused: any major for `latestMajor`, any minor of the declared major for `latestMinor`, any feature band for `latestFeature`, and any patch in the declared band for `latestPatch`. `disable` and a prerelease `sdk.version` require the exact declared version.
+When `global.json` declares a `rollForward` policy, the highest locally installed SDK the policy accepts is reused: any major for `major` and `latestMajor`, any minor of the declared major for `minor` and `latestMinor`, any feature band of the declared major and minor for `feature` and `latestFeature`, and any patch in the declared band for `patch` and `latestPatch`. `disable` and a prerelease `sdk.version` require the exact declared version.
 
 Requests that need the .NET release metadata always install online: `dotnet-version: latest` with `dotnet-channel: LTS` or `STS`, and a bare wildcard (`x`, `X` or `*`).
 

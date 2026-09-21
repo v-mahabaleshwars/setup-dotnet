@@ -3,7 +3,13 @@ import * as core from '@actions/core';
 import * as exec from '@actions/exec';
 import * as io from '@actions/io';
 import * as hc from '@actions/http-client';
-import {chmodSync, existsSync, readdirSync} from 'fs';
+import {
+  accessSync,
+  chmodSync,
+  constants as fsConstants,
+  readdirSync,
+  statSync
+} from 'fs';
 import path from 'path';
 import {fileURLToPath} from 'url';
 import os from 'os';
@@ -378,6 +384,29 @@ export function normalizeArch(arch: string): string {
   }
 }
 
+function isFile(filePath: string): boolean {
+  try {
+    return statSync(filePath).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function isExecutableFile(filePath: string): boolean {
+  if (!isFile(filePath)) {
+    return false;
+  }
+  if (IS_WINDOWS) {
+    return true;
+  }
+  try {
+    accessSync(filePath, fsConstants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export class DotnetCoreInstaller {
   private static readonly FeatureBandSyntax = /^(\d+)\.(\d+)\.(\d)xx$/;
 
@@ -391,7 +420,8 @@ export class DotnetCoreInstaller {
     private architecture?: string,
     private dotnetChannel?: string,
     private checkLatest: boolean = true,
-    private minimumVersion?: string
+    private minimumVersion?: string,
+    private rollForward?: string
   ) {
     this.version = version.trim();
   }
@@ -403,7 +433,7 @@ export class DotnetCoreInstaller {
         .filter(entry => entry.isDirectory() || entry.isSymbolicLink())
         .map(entry => entry.name)
         .filter(name => semver.valid(name) !== null)
-        .filter(name => existsSync(path.join(sdkDir, name, 'dotnet.dll')));
+        .filter(name => isFile(path.join(sdkDir, name, 'dotnet.dll')));
       core.debug(
         `Locally installed .NET SDKs in '${sdkDir}': ${
           versions.join(', ') || '<none>'
@@ -417,7 +447,7 @@ export class DotnetCoreInstaller {
   }
 
   private hasDotnetMuxer(): boolean {
-    return existsSync(
+    return isExecutableFile(
       path.join(DotnetInstallDir.dirPath, IS_WINDOWS ? 'dotnet.exe' : 'dotnet')
     );
   }
@@ -476,6 +506,50 @@ export class DotnetCoreInstaller {
     );
   }
 
+  private findByRollForward(
+    candidates: string[],
+    policy: string,
+    declaredVersion: string
+  ): string | null {
+    const declared = semver.parse(declaredVersion);
+    if (!declared) {
+      return null;
+    }
+    const major = String(declared.major);
+    const minor = String(declared.minor);
+    const band = String(Math.floor(declared.patch / 100));
+
+    switch (policy) {
+      case 'patch':
+      case 'latestPatch':
+        return this.findByFeatureBand(candidates, major, minor, band);
+      case 'feature':
+      case 'latestFeature':
+        return this.findByMajorMinor(candidates, major, minor);
+      case 'minor':
+      case 'latestMinor':
+        return this.findByMajor(candidates, major);
+      case 'major':
+      case 'latestMajor':
+        return candidates[0] ?? null;
+      default:
+        return null;
+    }
+  }
+
+  private filterByQuality(allowed: string[]): string[] {
+    const wantsPrerelease =
+      ['preview', 'daily'].includes((this.quality || '').toLowerCase()) &&
+      this.qualityApplies();
+    return allowed
+      .filter(version =>
+        wantsPrerelease
+          ? semver.prerelease(version) !== null
+          : semver.prerelease(version) === null
+      )
+      .sort(semver.rcompare);
+  }
+
   private findLocalSdkVersion(): string | null {
     const installed = this.getInstalledSdkVersions();
     if (!installed.length) {
@@ -501,6 +575,14 @@ export class DotnetCoreInstaller {
       return null;
     }
 
+    if (this.rollForward && minimumVersion) {
+      return this.findByRollForward(
+        this.filterByQuality(allowed),
+        this.rollForward,
+        minimumVersion
+      );
+    }
+
     if (semver.valid(this.version)) {
       return allowed.find(version => version === this.version) ?? null;
     }
@@ -516,32 +598,13 @@ export class DotnetCoreInstaller {
       return null;
     }
 
-    const wantsPrerelease =
-      ['preview', 'daily'].includes((this.quality || '').toLowerCase()) &&
-      this.qualityApplies();
-    const candidates = allowed
-      .filter(version =>
-        wantsPrerelease
-          ? semver.prerelease(version) !== null
-          : semver.prerelease(version) === null
-      )
-      .sort(semver.rcompare);
+    const candidates = this.filterByQuality(allowed);
 
     if (!candidates.length) {
       return null;
     }
 
     const input = this.version.toLowerCase();
-
-    if (minimumVersion) {
-      if (!input) {
-        return candidates[0];
-      }
-      const rollForwardMajor = input.match(/^(\d+)$/)?.[1];
-      if (rollForwardMajor) {
-        return this.findByMajor(candidates, rollForwardMajor);
-      }
-    }
 
     if (input === 'latest') {
       const channel = (this.dotnetChannel || '').trim();
