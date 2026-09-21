@@ -106840,7 +106840,8 @@ async function run() {
         const addVersionFromGlobalJson = (globalJsonPath) => {
             const { version, minimumVersion, rollForward } = getVersionFromGlobalJson(globalJsonPath);
             versions.push(version);
-            if (minimumVersion && !explicitVersions.has(version)) {
+            const isRedundantExplicitPin = explicitVersions.has(version) && version === minimumVersion;
+            if (minimumVersion && !isRedundantExplicitPin) {
                 globalJsonConstraints.set(version, { minimumVersion, rollForward });
             }
         };

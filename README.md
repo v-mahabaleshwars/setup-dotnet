@@ -311,7 +311,7 @@ steps:
 
 ## Using the `check-latest` input
 
-By default (`check-latest: true`) the action resolves and installs the latest version matching the request online, which is the historical behavior. With `check-latest: false` it first looks for an SDK already installed under [`DOTNET_INSTALL_DIR`](#environment-variables) and reuses it, skipping every network call — useful for air-gapped or preloaded runners. If none matches, it installs online as usual.
+By default (`check-latest: true`) the action resolves and installs the latest version matching the request online, which is the historical behavior. With `check-latest: false` it first looks for an SDK already installed under [`DOTNET_INSTALL_DIR`](#environment-variables) and reuses it, skipping SDK resolution and download — useful for air-gapped or preloaded runners (the `cache` and `workloads` inputs still use the network). If none matches, it installs online as usual.
 
 ```yaml
 steps:
