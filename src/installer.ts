@@ -3,7 +3,7 @@ import * as core from '@actions/core';
 import * as exec from '@actions/exec';
 import * as io from '@actions/io';
 import * as hc from '@actions/http-client';
-import {chmodSync} from 'fs';
+import {chmodSync, lstatSync, mkdtempSync, rmSync} from 'fs';
 import path from 'path';
 import {fileURLToPath} from 'url';
 import os from 'os';
@@ -336,15 +336,143 @@ export class DotnetInstallScript {
 export abstract class DotnetInstallDir {
   private static readonly default = {
     linux: '/usr/share/dotnet',
-    mac: path.join(process.env['HOME'] + '', '.dotnet'),
+    // Lazy: os.homedir() throws for a UID with no passwd entry and no HOME.
+    get mac() {
+      return DotnetInstallDir.homeDirPath();
+    },
     windows: path.join(process.env['PROGRAMFILES'] + '', 'dotnet')
   };
 
-  public static readonly dirPath = process.env['DOTNET_INSTALL_DIR']
-    ? DotnetInstallDir.convertInstallPathToAbsolute(
+  private static resolvedDirPath: string | undefined;
+
+  public static get dirPath(): string {
+    if (DotnetInstallDir.resolvedDirPath === undefined) {
+      DotnetInstallDir.resolvedDirPath = DotnetInstallDir.resolveDirPath();
+    }
+    return DotnetInstallDir.resolvedDirPath;
+  }
+
+  /** `undefined` when the home directory cannot be determined. */
+  private static homeDirPath(): string | undefined {
+    try {
+      const home = os.homedir();
+      // An empty HOME yields '', which would otherwise resolve against the cwd.
+      return path.isAbsolute(home) ? path.join(home, '.dotnet') : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** A unique directory keeps another user from pre-seeding a predictable one in the shared OS temp directory. */
+  private static tempDirPath(): string | undefined {
+    const runnerTemp = process.env['RUNNER_TEMP'];
+    if (runnerTemp) return path.join(runnerTemp, '.dotnet');
+
+    try {
+      return mkdtempSync(path.join(os.tmpdir(), 'setup-dotnet-'));
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Candidates are resolved one at a time because determining them can fail or, for the temp directory, create it. */
+  public static resolveDirPath(
+    defaultPath?: string,
+    fallbackPath?: string,
+    tempFallbackPath?: string
+  ): string {
+    // An explicit override is honored without a writability check.
+    if (process.env['DOTNET_INSTALL_DIR']) {
+      return DotnetInstallDir.convertInstallPathToAbsolute(
         process.env['DOTNET_INSTALL_DIR']
-      )
-    : DotnetInstallDir.default[PLATFORM];
+      );
+    }
+
+    const candidates = [
+      () => defaultPath ?? DotnetInstallDir.default[PLATFORM],
+      () => fallbackPath ?? DotnetInstallDir.homeDirPath(),
+      () => tempFallbackPath ?? DotnetInstallDir.tempDirPath()
+    ];
+    const unusable: string[] = [];
+
+    for (let index = 0; index < candidates.length; index++) {
+      const candidate = candidates[index]();
+      const alreadyProbed = unusable.some(
+        other => path.normalize(other) === path.normalize(candidate ?? '')
+      );
+      if (!candidate || alreadyProbed) continue;
+
+      if (DotnetInstallDir.isDirectoryWritable(candidate)) {
+        // Any other root moves DOTNET_ROOT and hides the .NET preinstalled there.
+        if (index > 0) {
+          core.warning(
+            `${DotnetInstallDir.describeUnusable(unusable)} Falling back to '${candidate}'; .NET preinstalled in the default location will no longer be used. Set the 'DOTNET_INSTALL_DIR' environment variable to override this location.`
+          );
+        }
+        return candidate;
+      }
+      unusable.push(candidate);
+    }
+
+    if (!unusable.length) {
+      throw new Error(
+        `Unable to determine a directory to install .NET into. Set the 'DOTNET_INSTALL_DIR' environment variable to a writable location.`
+      );
+    }
+
+    core.warning(
+      `${DotnetInstallDir.describeUnusable(unusable)} Keeping '${unusable[0]}', but the installation is likely to fail. Set the 'DOTNET_INSTALL_DIR' environment variable to a writable location.`
+    );
+    return unusable[0];
+  }
+
+  private static describeUnusable(unusable: string[]): string {
+    if (!unusable.length) {
+      return 'The home directory of the current user could not be determined.';
+    }
+
+    const paths = unusable.map(candidate => `'${candidate}'`).join(', ');
+    return unusable.length === 1
+      ? `The .NET install directory ${paths} is not writable by the current user.`
+      : `The .NET install directories ${paths} are not writable by the current user.`;
+  }
+
+  /** `accessSync` does not honor Windows ACLs, and unlike a file write `mkdtemp` cannot follow a planted symlink, only removes what it created, and proves subdirectories can be created. */
+  public static isDirectoryWritable(dirPath: string): boolean {
+    let current = path.resolve(dirPath);
+
+    try {
+      // The install script may need to create the leaf directory itself. lstat,
+      // not existsSync, so a dangling symlink is rejected by the probe below
+      // rather than skipped in favour of its writable parent.
+      while (!lstatSync(current, {throwIfNoEntry: false})) {
+        const parent = path.dirname(current);
+        if (parent === current) {
+          return false;
+        }
+        current = parent;
+      }
+    } catch {
+      // A non-directory component in the path.
+      return false;
+    }
+
+    let probe: string | undefined;
+    try {
+      probe = mkdtempSync(path.join(current, '.setup-dotnet-write-test-'));
+      return true;
+    } catch {
+      return false;
+    } finally {
+      if (probe) {
+        try {
+          rmSync(probe, {recursive: true, force: true});
+        } catch {
+          // Best-effort cleanup; ignore failures.
+        }
+      }
+    }
+  }
 
   private static convertInstallPathToAbsolute(installDir: string): string {
     if (path.isAbsolute(installDir)) return path.normalize(installDir);
@@ -378,10 +506,6 @@ export function normalizeArch(arch: string): string {
 }
 
 export class DotnetCoreInstaller {
-  static {
-    DotnetInstallDir.setEnvironmentVariable();
-  }
-
   constructor(
     private version: string,
     private quality: QualityOptions,
@@ -390,6 +514,9 @@ export class DotnetCoreInstaller {
   ) {}
 
   public async installDotnet(): Promise<string | null> {
+    // Not at import: a run that installs nothing must not touch the filesystem.
+    DotnetInstallDir.setEnvironmentVariable();
+
     const versionResolver = new DotnetVersionResolver(
       this.version,
       this.quality,

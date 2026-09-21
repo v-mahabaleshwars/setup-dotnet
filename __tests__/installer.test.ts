@@ -1,5 +1,6 @@
 import {
   afterAll,
+  afterEach,
   beforeAll,
   beforeEach,
   describe,
@@ -10,6 +11,7 @@ import {
 import each from 'jest-each';
 import semver from 'semver';
 import fspromises from 'fs/promises';
+import type {PathLike, Stats} from 'fs';
 import os from 'os';
 import path from 'path';
 
@@ -34,10 +36,22 @@ jest.unstable_mockModule('@actions/io', () => ({
 jest.unstable_mockModule('fs', () => {
   const actual = jest.requireActual('fs') as typeof import('fs');
   const chmodSync = jest.fn();
+  const lstatSync = jest.fn(actual.lstatSync);
+  const mkdtempSync = jest.fn(actual.mkdtempSync);
+  const rmSync = jest.fn(actual.rmSync);
   return {
     ...actual,
     chmodSync,
-    default: {...actual, chmodSync}
+    lstatSync,
+    mkdtempSync,
+    rmSync,
+    default: {
+      ...actual,
+      chmodSync,
+      lstatSync,
+      mkdtempSync,
+      rmSync
+    }
   };
 });
 
@@ -527,6 +541,387 @@ describe('installer tests', () => {
         installer.DotnetInstallDir.addToPath();
         const path = process.env['PATH'];
         expect(path).toContain(process.env['DOTNET_INSTALL_DIR']);
+      });
+    });
+  });
+
+  describe('DotnetInstallDir tests', () => {
+    const warningSpy = core.warning as jest.Mock;
+
+    describe('isDirectoryWritable() tests', () => {
+      const actualFs = jest.requireActual<typeof import('fs')>('fs');
+      const lstatSyncMock = fs.lstatSync as jest.Mock;
+      const mkdtempSyncMock = fs.mkdtempSync as jest.Mock;
+      const rmSyncMock = fs.rmSync as jest.Mock;
+      const entry = {} as Stats;
+      const probeName = (...args: unknown[]) => `${args[0]}abc123`;
+
+      afterEach(() => {
+        lstatSyncMock.mockImplementation((...args: unknown[]) =>
+          actualFs.lstatSync(args[0] as PathLike)
+        );
+        mkdtempSyncMock.mockImplementation((...args: unknown[]) =>
+          actualFs.mkdtempSync(args[0] as string)
+        );
+        rmSyncMock.mockImplementation((...args: unknown[]) =>
+          actualFs.rmSync(args[0] as PathLike)
+        );
+        lstatSyncMock.mockClear();
+        mkdtempSyncMock.mockClear();
+        rmSyncMock.mockClear();
+      });
+
+      it('returns true when an existing directory can be written to', () => {
+        lstatSyncMock.mockReturnValue(entry);
+        mkdtempSyncMock.mockImplementation(probeName);
+        rmSyncMock.mockImplementation(() => {});
+
+        const target = path.resolve('some', 'writable', 'dir');
+        expect(installer.DotnetInstallDir.isDirectoryWritable(target)).toBe(
+          true
+        );
+        expect(mkdtempSyncMock).toHaveBeenCalled();
+        expect(rmSyncMock).toHaveBeenCalledWith(
+          `${target}${path.sep}.setup-dotnet-write-test-abc123`,
+          {
+            recursive: true,
+            force: true
+          }
+        );
+      });
+
+      it('returns false when writing to an existing directory is denied', () => {
+        lstatSyncMock.mockReturnValue(entry);
+        mkdtempSyncMock.mockImplementation(() => {
+          throw Object.assign(new Error('permission denied'), {
+            code: 'EACCES'
+          });
+        });
+        rmSyncMock.mockImplementation(() => {});
+
+        const target = path.resolve('root', 'only', 'dir');
+        expect(installer.DotnetInstallDir.isDirectoryWritable(target)).toBe(
+          false
+        );
+      });
+
+      it('stops at a dangling symlink instead of probing its writable parent', () => {
+        const base = path.resolve('writable-base');
+        const link = path.join(base, '.dotnet');
+
+        // A dangling link has no target, so only lstat sees it.
+        lstatSyncMock.mockImplementation((...args: unknown[]) =>
+          [base, link].includes(path.resolve(String(args[0])))
+            ? entry
+            : undefined
+        );
+        mkdtempSyncMock.mockImplementation(() => {
+          throw Object.assign(new Error('no such file or directory'), {
+            code: 'ENOENT'
+          });
+        });
+        rmSyncMock.mockImplementation(() => {});
+
+        expect(installer.DotnetInstallDir.isDirectoryWritable(link)).toBe(
+          false
+        );
+        expect(path.dirname(String(mkdtempSyncMock.mock.calls[0][0]))).toBe(
+          link
+        );
+      });
+
+      it('walks up to the nearest existing ancestor, and gives up at the filesystem root', () => {
+        const base = path.resolve('writable-base');
+        const target = path.join(base, 'sub', 'leaf');
+
+        lstatSyncMock.mockImplementation((...args: unknown[]) =>
+          path.resolve(String(args[0])) === base ? entry : undefined
+        );
+        mkdtempSyncMock.mockImplementation(probeName);
+        rmSyncMock.mockImplementation(() => {});
+
+        expect(installer.DotnetInstallDir.isDirectoryWritable(target)).toBe(
+          true
+        );
+        expect(path.dirname(String(mkdtempSyncMock.mock.calls[0][0]))).toBe(
+          base
+        );
+
+        lstatSyncMock.mockReturnValue(undefined);
+        mkdtempSyncMock.mockClear();
+        expect(installer.DotnetInstallDir.isDirectoryWritable(target)).toBe(
+          false
+        );
+        expect(mkdtempSyncMock).not.toHaveBeenCalled();
+      });
+
+      it('does not remove anything when the probe directory was not created', () => {
+        lstatSyncMock.mockReturnValue(entry);
+        mkdtempSyncMock.mockImplementation(() => {
+          throw Object.assign(new Error('permission denied'), {
+            code: 'EPERM'
+          });
+        });
+        rmSyncMock.mockImplementation(() => {});
+
+        installer.DotnetInstallDir.isDirectoryWritable(
+          path.resolve('some', 'dir')
+        );
+        expect(rmSyncMock).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('resolveDirPath() tests', () => {
+      const defaultPath = path.resolve('usr', 'share', 'dotnet');
+      const fallbackPath = path.join(os.homedir(), '.dotnet');
+      let writableSpy: jest.SpiedFunction<
+        typeof installer.DotnetInstallDir.isDirectoryWritable
+      >;
+
+      beforeEach(() => {
+        delete process.env['DOTNET_INSTALL_DIR'];
+        writableSpy = jest.spyOn(
+          installer.DotnetInstallDir,
+          'isDirectoryWritable'
+        );
+        warningSpy.mockClear();
+      });
+
+      afterEach(() => {
+        writableSpy.mockRestore();
+      });
+
+      it('honors an explicit DOTNET_INSTALL_DIR without checking writability', () => {
+        process.env['DOTNET_INSTALL_DIR'] = path.resolve('custom', 'dir');
+
+        const result = installer.DotnetInstallDir.resolveDirPath(
+          defaultPath,
+          fallbackPath
+        );
+
+        expect(result).toBe(path.normalize(process.env['DOTNET_INSTALL_DIR']));
+        expect(writableSpy).not.toHaveBeenCalled();
+      });
+
+      it('uses the default location when it is writable', () => {
+        writableSpy.mockReturnValue(true);
+
+        const result = installer.DotnetInstallDir.resolveDirPath(
+          defaultPath,
+          fallbackPath
+        );
+
+        expect(result).toBe(defaultPath);
+        expect(warningSpy).not.toHaveBeenCalled();
+      });
+
+      it('falls back to the home directory when the default is not writable but home is', () => {
+        writableSpy.mockImplementation(
+          (dir: string) => path.normalize(dir) === path.normalize(fallbackPath)
+        );
+
+        const result = installer.DotnetInstallDir.resolveDirPath(
+          defaultPath,
+          fallbackPath
+        );
+
+        expect(result).toBe(fallbackPath);
+        expect(warningSpy).toHaveBeenCalledTimes(1);
+        expect(warningSpy.mock.calls[0][0]).toContain(defaultPath);
+        expect(warningSpy.mock.calls[0][0]).toContain(
+          'is not writable by the current user'
+        );
+        expect(warningSpy.mock.calls[0][0]).toContain(
+          `Falling back to '${fallbackPath}'`
+        );
+      });
+
+      it('falls back to the temp directory when neither the default nor home are writable', () => {
+        const tempFallbackPath = path.join(os.tmpdir(), '.dotnet');
+        writableSpy.mockImplementation(
+          (dir: string) =>
+            path.normalize(dir) === path.normalize(tempFallbackPath)
+        );
+
+        const result = installer.DotnetInstallDir.resolveDirPath(
+          defaultPath,
+          fallbackPath,
+          tempFallbackPath
+        );
+
+        expect(result).toBe(tempFallbackPath);
+        expect(warningSpy).toHaveBeenCalledTimes(1);
+        expect(warningSpy.mock.calls[0][0]).toContain(
+          `Falling back to '${tempFallbackPath}'`
+        );
+      });
+
+      it('keeps the default location when nothing is writable', () => {
+        const tempFallbackPath = path.join(os.tmpdir(), '.dotnet');
+        writableSpy.mockReturnValue(false);
+
+        const result = installer.DotnetInstallDir.resolveDirPath(
+          defaultPath,
+          fallbackPath,
+          tempFallbackPath
+        );
+
+        expect(result).toBe(defaultPath);
+        expect(warningSpy).toHaveBeenCalledTimes(1);
+        expect(warningSpy.mock.calls[0][0]).toContain(
+          'are not writable by the current user'
+        );
+        expect(warningSpy.mock.calls[0][0]).toContain(
+          'the installation is likely to fail'
+        );
+      });
+
+      it('probes the home directory once when it is also the default', () => {
+        const tempFallbackPath = path.join(os.tmpdir(), '.dotnet');
+        writableSpy.mockImplementation(
+          (dir: string) =>
+            path.normalize(dir) === path.normalize(tempFallbackPath)
+        );
+
+        const result = installer.DotnetInstallDir.resolveDirPath(
+          fallbackPath,
+          fallbackPath,
+          tempFallbackPath
+        );
+
+        expect(result).toBe(tempFallbackPath);
+        expect(writableSpy).toHaveBeenCalledTimes(2);
+        expect(warningSpy).toHaveBeenCalledTimes(1);
+        expect(warningSpy.mock.calls[0][0]).toContain(
+          `Falling back to '${tempFallbackPath}'`
+        );
+      });
+
+      describe('when the home directory cannot be determined', () => {
+        const runnerTempPath = path.resolve('runner', 'temp');
+        const tempFallbackPath = path.join(runnerTempPath, '.dotnet');
+        let homedirSpy: jest.SpiedFunction<typeof os.homedir>;
+
+        beforeEach(() => {
+          process.env['RUNNER_TEMP'] = runnerTempPath;
+          homedirSpy = jest.spyOn(os, 'homedir').mockImplementation(() => {
+            throw Object.assign(
+              new Error(
+                'A system error occurred: uv_os_homedir returned ENOENT'
+              ),
+              {code: 'ERR_SYSTEM_ERROR'}
+            );
+          });
+        });
+
+        afterEach(() => {
+          homedirSpy.mockRestore();
+        });
+
+        it('still honors an explicit DOTNET_INSTALL_DIR', () => {
+          process.env['DOTNET_INSTALL_DIR'] = path.resolve('custom', 'dir');
+
+          const result = installer.DotnetInstallDir.resolveDirPath();
+
+          expect(result).toBe(
+            path.normalize(process.env['DOTNET_INSTALL_DIR'])
+          );
+          expect(homedirSpy).not.toHaveBeenCalled();
+        });
+
+        it('skips the home candidate and continues to the temp fallback', () => {
+          writableSpy.mockImplementation(
+            (dir: string) =>
+              path.normalize(dir) === path.normalize(tempFallbackPath)
+          );
+
+          expect(installer.DotnetInstallDir.resolveDirPath()).toBe(
+            tempFallbackPath
+          );
+
+          // An empty HOME is equally undetermined and must not resolve against the cwd.
+          homedirSpy.mockReturnValue('');
+          expect(installer.DotnetInstallDir.resolveDirPath()).toBe(
+            tempFallbackPath
+          );
+        });
+      });
+
+      describe('temp fallback location', () => {
+        const mkdtempSyncMock = fs.mkdtempSync as jest.Mock;
+        const privateTempPath = path.join(os.tmpdir(), 'setup-dotnet-abc123');
+
+        beforeEach(() => {
+          mkdtempSyncMock.mockClear();
+          mkdtempSyncMock.mockReturnValue(privateTempPath);
+        });
+
+        afterEach(() => {
+          const actualFs = jest.requireActual<typeof import('fs')>('fs');
+          mkdtempSyncMock.mockImplementation((...args: unknown[]) =>
+            actualFs.mkdtempSync(args[0] as string)
+          );
+        });
+
+        it('uses the job-private RUNNER_TEMP directory when it is available', () => {
+          const runnerTempPath = path.resolve('runner', 'temp');
+          process.env['RUNNER_TEMP'] = runnerTempPath;
+          const expected = path.join(runnerTempPath, '.dotnet');
+          writableSpy.mockImplementation(
+            (dir: string) => path.normalize(dir) === path.normalize(expected)
+          );
+
+          const result = installer.DotnetInstallDir.resolveDirPath(
+            defaultPath,
+            fallbackPath
+          );
+
+          expect(result).toBe(expected);
+          expect(mkdtempSyncMock).not.toHaveBeenCalled();
+        });
+
+        it('creates a uniquely named directory instead of a predictable child of the shared OS temp directory', () => {
+          delete process.env['RUNNER_TEMP'];
+          writableSpy.mockReturnValue(true);
+
+          expect(
+            installer.DotnetInstallDir.resolveDirPath(defaultPath, fallbackPath)
+          ).toBe(defaultPath);
+          expect(mkdtempSyncMock).not.toHaveBeenCalled();
+
+          writableSpy.mockImplementation(
+            (dir: string) =>
+              path.normalize(dir) === path.normalize(privateTempPath)
+          );
+
+          expect(
+            installer.DotnetInstallDir.resolveDirPath(defaultPath, fallbackPath)
+          ).toBe(privateTempPath);
+          expect(mkdtempSyncMock).toHaveBeenCalledWith(
+            path.join(os.tmpdir(), 'setup-dotnet-')
+          );
+        });
+
+        it('is skipped when it cannot be created', () => {
+          delete process.env['RUNNER_TEMP'];
+          mkdtempSyncMock.mockImplementation(() => {
+            throw Object.assign(new Error('permission denied'), {
+              code: 'EACCES'
+            });
+          });
+          writableSpy.mockReturnValue(false);
+
+          const result = installer.DotnetInstallDir.resolveDirPath(
+            defaultPath,
+            fallbackPath
+          );
+
+          expect(result).toBe(defaultPath);
+          expect(writableSpy).toHaveBeenCalledTimes(2);
+          expect(warningSpy.mock.calls[0][0]).toContain(
+            'the installation is likely to fail'
+          );
+        });
       });
     });
   });
