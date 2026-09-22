@@ -676,6 +676,27 @@ describe('installer tests', () => {
         expect(getExecOutputSpy).not.toHaveBeenCalled();
       });
 
+      each(['preview', 'daily'] as const).it(
+        "reuses the highest local prerelease SDK for a channel-less latest request with '%s' quality",
+        async quality => {
+          readdirSyncSpy.mockReturnValue(
+            makeDirents(['8.0.412', '9.0.100-preview.1', '9.0.100-preview.2'])
+          );
+
+          const dotnetInstaller = new installer.DotnetCoreInstaller(
+            'latest',
+            quality,
+            undefined,
+            undefined,
+            false
+          );
+          const installedVersion = await dotnetInstaller.installDotnet();
+
+          expect(installedVersion).toBe('9.0.100-preview.2');
+          expect(getExecOutputSpy).not.toHaveBeenCalled();
+        }
+      );
+
       it('ignores prerelease SDKs when quality is not preview/daily', async () => {
         readdirSyncSpy.mockReturnValue(
           makeDirents(['8.0.100-preview.1', '8.0.100'])
