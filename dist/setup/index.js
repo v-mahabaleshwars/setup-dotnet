@@ -45426,21 +45426,14 @@ class DotnetCoreInstaller {
         const major = this.version.match(/^(\d+)/)?.[1];
         return major ? Number(major) >= QUALITY_INPUT_MINIMAL_MAJOR_TAG : false;
     }
-    findByMajorMinor(candidates, major, minor) {
-        return (candidates.find(version => {
-            const parsed = semver_default().parse(version);
-            return (parsed &&
-                parsed.major === Number(major) &&
-                parsed.minor === Number(minor));
-        }) ?? null);
-    }
-    findByFeatureBand(candidates, major, minor, band) {
+    findByScope(candidates, major, minor, band) {
         return (candidates.find(version => {
             const parsed = semver_default().parse(version);
             return (parsed &&
                 parsed.major === Number(major) &&
                 parsed.minor === Number(minor) &&
-                Math.floor(parsed.patch / 100) === Number(band));
+                (band === undefined ||
+                    Math.floor(parsed.patch / 100) === Number(band)));
         }) ?? null);
     }
     static isInRollForwardScope(version, policy, declared) {
@@ -45468,26 +45461,18 @@ class DotnetCoreInstaller {
         }
     }
     static highestVersion(versions) {
-        return versions.reduce((best, version) => (!best || semver_default().gt(version, best) ? version : best), null);
+        return versions.reduce((best, version) => semver_default().gt(version, best) ? version : best);
     }
     static nearestBandVersion(versions) {
         return versions.reduce((best, version) => {
-            if (!best) {
-                return version;
-            }
-            const candidate = semver_default().parse(version);
-            const incumbent = semver_default().parse(best);
-            if (!candidate || !incumbent) {
-                return best;
-            }
-            const bandDelta = candidate.major - incumbent.major ||
-                candidate.minor - incumbent.minor ||
-                Math.floor(candidate.patch / 100) - Math.floor(incumbent.patch / 100);
-            if (bandDelta !== 0) {
-                return bandDelta < 0 ? version : best;
-            }
-            return semver_default().gt(version, best) ? version : best;
-        }, null);
+            const delta = semver_default().major(version) - semver_default().major(best) ||
+                semver_default().minor(version) - semver_default().minor(best) ||
+                Math.floor(semver_default().patch(version) / 100) -
+                    Math.floor(semver_default().patch(best) / 100);
+            return delta < 0 || (delta === 0 && semver_default().gt(version, best))
+                ? version
+                : best;
+        });
     }
     findByRollForward(candidates, policy, declaredVersion) {
         const declared = semver_default().parse(declaredVersion);
@@ -45560,11 +45545,11 @@ class DotnetCoreInstaller {
             }
             const channelMinor = channel.match(/^(\d+)\.(\d+)$/);
             if (channelMinor) {
-                return this.findByMajorMinor(candidates, channelMinor[1], channelMinor[2]);
+                return this.findByScope(candidates, channelMinor[1], channelMinor[2]);
             }
             const channelBand = channel.match(/^(\d+)\.(\d+)\.(\d)xx$/);
             if (channelBand) {
-                return this.findByFeatureBand(candidates, channelBand[1], channelBand[2], channelBand[3]);
+                return this.findByScope(candidates, channelBand[1], channelBand[2], channelBand[3]);
             }
             return null;
         }
@@ -45573,16 +45558,16 @@ class DotnetCoreInstaller {
             if (Number(bandMatch[1]) < LATEST_PATCH_SYNTAX_MINIMAL_MAJOR_TAG) {
                 return null;
             }
-            return this.findByFeatureBand(candidates, bandMatch[1], bandMatch[2], bandMatch[3]);
+            return this.findByScope(candidates, bandMatch[1], bandMatch[2], bandMatch[3]);
         }
         const minorMatch = this.version.match(/^(\d+)\.(\d+)(?:\.[xX*])?$/);
         if (minorMatch) {
-            return this.findByMajorMinor(candidates, minorMatch[1], minorMatch[2]);
+            return this.findByScope(candidates, minorMatch[1], minorMatch[2]);
         }
         const majorMatch = this.version.match(/^(\d+)(?:\.[xX*])?$/);
         if (majorMatch) {
             const [major, minor] = channelForMajor(majorMatch[1]).split('.');
-            return this.findByMajorMinor(candidates, major, minor);
+            return this.findByScope(candidates, major, minor);
         }
         return null;
     }
