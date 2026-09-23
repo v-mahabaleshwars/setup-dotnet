@@ -261,7 +261,7 @@ const ROLL_FORWARD_POLICIES = [
   'latestMajor'
 ];
 
-const FULL_SDK_VERSION_PATTERN = /^\d+\.\d+\.[1-9]\d{2,}$/;
+const versionPattern = /^\d+\.\d+\.[1-9]\d{2,}$/;
 
 function getVersionFromGlobalJson(globalJsonPath: string): GlobalJsonVersion {
   let version = '';
@@ -280,7 +280,7 @@ function getVersionFromGlobalJson(globalJsonPath: string): GlobalJsonVersion {
     version = globalJson.sdk.version;
     const rollForward = globalJson.sdk.rollForward;
     if (rollForward && !semver.prerelease(version)) {
-      if (!FULL_SDK_VERSION_PATTERN.test(version)) {
+      if (!versionPattern.test(version)) {
         throw new Error(
           `Version '${version}' is not valid for the 'sdk.version' value in global.json. ` +
             `When 'rollForward' is specified, a full SDK version is required. ` +
@@ -316,7 +316,7 @@ function getVersionFromGlobalJson(globalJsonPath: string): GlobalJsonVersion {
     } else if (
       !rollForward &&
       !semver.prerelease(version) &&
-      FULL_SDK_VERSION_PATTERN.test(version)
+      versionPattern.test(version)
     ) {
       minimumVersion = version;
       rollForwardPolicy = 'patch';

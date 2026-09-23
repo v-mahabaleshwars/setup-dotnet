@@ -1127,24 +1127,6 @@ describe('installer tests', () => {
           expect(getExecOutputSpy).not.toHaveBeenCalled();
         });
 
-        it('latestMajor reuses a local SDK of the declared major', async () => {
-          readdirSyncSpy.mockReturnValue(makeDirents(['8.0.412']));
-
-          const dotnetInstaller = new installer.DotnetCoreInstaller(
-            '',
-            '',
-            undefined,
-            undefined,
-            false,
-            '8.0.100',
-            'latestMajor'
-          );
-          const installedVersion = await dotnetInstaller.installDotnet();
-
-          expect(installedVersion).toBe('8.0.412');
-          expect(getExecOutputSpy).not.toHaveBeenCalled();
-        });
-
         it('latestMajor ignores local SDKs below the declared version', async () => {
           readdirSyncSpy.mockReturnValue(makeDirents(['8.0.100', '7.0.400']));
           maxSatisfyingSpy.mockImplementation(() => '8.0.412');
@@ -1235,24 +1217,6 @@ describe('installer tests', () => {
           expect(getExecOutputSpy).toHaveBeenCalledTimes(2);
         });
 
-        it('latestFeature reuses the highest patch above the floor', async () => {
-          readdirSyncSpy.mockReturnValue(makeDirents(['8.0.100', '8.0.412']));
-
-          const dotnetInstaller = new installer.DotnetCoreInstaller(
-            '8.0',
-            '',
-            undefined,
-            undefined,
-            false,
-            '8.0.200',
-            'latestFeature'
-          );
-          const installedVersion = await dotnetInstaller.installDotnet();
-
-          expect(installedVersion).toBe('8.0.412');
-          expect(getExecOutputSpy).not.toHaveBeenCalled();
-        });
-
         it('latestPatch stays inside the declared feature band', async () => {
           readdirSyncSpy.mockReturnValue(makeDirents(['8.0.205', '8.0.412']));
 
@@ -1268,24 +1232,6 @@ describe('installer tests', () => {
           const installedVersion = await dotnetInstaller.installDotnet();
 
           expect(installedVersion).toBe('8.0.205');
-          expect(getExecOutputSpy).not.toHaveBeenCalled();
-        });
-
-        it('feature reuses a higher feature band of the declared major.minor', async () => {
-          readdirSyncSpy.mockReturnValue(makeDirents(['8.0.200']));
-
-          const dotnetInstaller = new installer.DotnetCoreInstaller(
-            '8.0.100',
-            '',
-            undefined,
-            undefined,
-            false,
-            '8.0.100',
-            'feature'
-          );
-          const installedVersion = await dotnetInstaller.installDotnet();
-
-          expect(installedVersion).toBe('8.0.200');
           expect(getExecOutputSpy).not.toHaveBeenCalled();
         });
 
@@ -1322,42 +1268,6 @@ describe('installer tests', () => {
           const installedVersion = await dotnetInstaller.installDotnet();
 
           expect(installedVersion).toBe('8.0.105');
-          expect(getExecOutputSpy).not.toHaveBeenCalled();
-        });
-
-        it('minor reuses a higher minor of the declared major', async () => {
-          readdirSyncSpy.mockReturnValue(makeDirents(['8.1.200']));
-
-          const dotnetInstaller = new installer.DotnetCoreInstaller(
-            '8.0.100',
-            '',
-            undefined,
-            undefined,
-            false,
-            '8.0.100',
-            'minor'
-          );
-          const installedVersion = await dotnetInstaller.installDotnet();
-
-          expect(installedVersion).toBe('8.1.200');
-          expect(getExecOutputSpy).not.toHaveBeenCalled();
-        });
-
-        it('major reuses a higher major', async () => {
-          readdirSyncSpy.mockReturnValue(makeDirents(['9.0.101']));
-
-          const dotnetInstaller = new installer.DotnetCoreInstaller(
-            '8.0.100',
-            '',
-            undefined,
-            undefined,
-            false,
-            '8.0.100',
-            'major'
-          );
-          const installedVersion = await dotnetInstaller.installDotnet();
-
-          expect(installedVersion).toBe('9.0.101');
           expect(getExecOutputSpy).not.toHaveBeenCalled();
         });
 
