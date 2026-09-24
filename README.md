@@ -53,15 +53,37 @@ steps:
       9.0.x
 - run: dotnet build <my project>
 ```
+
+## Installing additional runtimes
+
+The `dotnet-runtime` input allows you to install .NET runtimes separately from SDKs. This is useful for multi-targeting scenarios where you need one SDK version but multiple runtime versions.
+
+When `dotnet-runtime` is specified, both the .NET Runtime (Microsoft.NETCore.App) and the ASP.NET Core Runtime (Microsoft.AspNetCore.App) are installed for each specified version. If no SDK is installed, the `dotnet-version` output will reflect the installed runtime version.
+
+**Example: Install SDK 10 with runtimes 8 and 9**:
+```yml
+steps:
+- uses: actions/checkout@v7
+- name: Setup dotnet
+  uses: actions/setup-dotnet@v6
+  with:
+    dotnet-version: '10.0.x'
+    dotnet-runtime: |
+      8.0.x
+      9.0.x
+- run: dotnet build <my project>
+- run: dotnet test <my project>
+```
+
 ## Supported version syntax
 
-The `dotnet-version` input supports following syntax:
+The `dotnet-version` and `dotnet-runtime` inputs support the following syntax:
 
-- **A.B.C** (e.g 9.0.308, 10.0.100-preview.1.25120.13) - installs exact version of .NET SDK
-- **A.B** or **A.B.x** (e.g. 8.0, 8.0.x) - installs the latest patch version of .NET SDK on the channel `8.0`, including prerelease versions (preview, rc)
+- **A.B.C** (e.g 9.0.308 for an SDK, 9.0.9 for a runtime, 10.0.100-preview.1.25120.13) - installs exact version of .NET SDK or runtime
+- **A.B** or **A.B.x** (e.g. 8.0, 8.0.x) - installs the latest patch version on the channel `8.0`, including prerelease versions (preview, rc)
 - **A** or **A.x** (e.g. 8, 8.x) - installs the latest minor version of the specified major tag, including prerelease versions (preview, rc)
-- **A.B.Cxx** (e.g. 8.0.4xx) - available since `.NET 5.0` release. Installs the latest version of the specific SDK release, including prerelease versions (preview, rc). 
-- **latest** - dynamically resolves to the highest active .NET SDK version. By default, it installs the latest **stable (GA)** version (excluding previews and end-of-life releases). Can be combined with `dotnet-channel` and `dotnet-quality`.
+- **A.B.Cxx** (e.g. 8.0.4xx) - available since `.NET 5.0` release. Installs the latest version of the specific release, including prerelease versions (preview, rc). 
+- **latest** - dynamically resolves to the highest active .NET version. By default, it installs the latest **stable (GA)** version (excluding previews and end-of-life releases). For `dotnet-version`, it can be combined with `dotnet-channel` and `dotnet-quality`.
 
 ## Using with `dotnet-channel` input
 

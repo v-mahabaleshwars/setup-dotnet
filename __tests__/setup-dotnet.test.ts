@@ -74,6 +74,11 @@ describe('setup-dotnet tests', () => {
     'installDotnet'
   );
 
+  const installRuntimeSpy = jest.spyOn(
+    DotnetCoreInstaller.prototype,
+    'installRuntime'
+  );
+
   const isCacheFeatureAvailableSpy =
     cacheUtils.isCacheFeatureAvailable as jest.Mock;
   const restoreCacheSpy = cacheRestore.restoreCache as jest.Mock;
@@ -83,7 +88,10 @@ describe('setup-dotnet tests', () => {
   describe('run() tests', () => {
     beforeEach(() => {
       DotnetInstallDir.addToPath = jest.fn();
-      getMultilineInputSpy.mockImplementation(input => inputs[input as string]);
+      inputs['dotnet-runtime'] = [];
+      getMultilineInputSpy.mockImplementation(
+        input => inputs[input as string] ?? []
+      );
       getInputSpy.mockImplementation(input => inputs[input as string]);
       getBooleanInputSpy.mockImplementation(input => inputs[input as string]);
     });
@@ -185,6 +193,33 @@ describe('setup-dotnet tests', () => {
         inputs['source-url'],
         inputs['config-file']
       );
+    });
+
+    it('should call installRuntime() for each dotnet-runtime version provided', async () => {
+      inputs['global-json-file'] = '';
+      inputs['dotnet-version'] = [];
+      inputs['dotnet-runtime'] = ['8.0.x', '9.0.x'];
+      inputs['dotnet-quality'] = '';
+
+      installRuntimeSpy.mockImplementation(() => Promise.resolve(''));
+
+      await setup.run();
+      expect(installRuntimeSpy).toHaveBeenCalledTimes(2);
+      expect(DotnetInstallDir.addToPath).toHaveBeenCalledTimes(1);
+    });
+
+    it('should set the dotnet-version output from the runtime version when only dotnet-runtime is provided', async () => {
+      inputs['global-json-file'] = '';
+      inputs['dotnet-version'] = [];
+      inputs['dotnet-runtime'] = ['8.0.x'];
+      inputs['dotnet-quality'] = '';
+
+      installRuntimeSpy.mockImplementation(() => Promise.resolve('8.0.11'));
+      maxSatisfyingSpy.mockImplementation(() => '8.0.11');
+      setOutputSpy.mockImplementation(() => {});
+
+      await setup.run();
+      expect(setOutputSpy).toHaveBeenCalledWith('dotnet-version', '8.0.11');
     });
 
     it('should call setOutput() after installation complete successfully', async () => {

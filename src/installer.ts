@@ -36,7 +36,8 @@ export class DotnetVersionResolver {
   constructor(
     version: string,
     private quality: QualityOptions = '',
-    private dotnetChannel?: string
+    private dotnetChannel?: string,
+    private inputName: string = 'dotnet-version'
   ) {
     this.inputVersion = version.trim();
     this.resolvedArgument = {type: '', value: '', qualityFlag: false};
@@ -84,7 +85,7 @@ export class DotnetVersionResolver {
 
     if (!semver.validRange(this.inputVersion) && !this.isLatestPatchSyntax()) {
       throw new Error(
-        `The 'dotnet-version' was supplied in invalid format: ${this.inputVersion}! Supported syntax: A.B.C, A.B, A.B.x, A, A.x, A.B.Cxx, latest`
+        `The '${this.inputName}' was supplied in invalid format: ${this.inputVersion}! Supported syntax: A.B.C, A.B, A.B.x, A, A.x, A.B.Cxx, latest`
       );
     }
     if (semver.valid(this.inputVersion)) {
@@ -107,7 +108,7 @@ export class DotnetVersionResolver {
       parseInt(majorTag) < LATEST_PATCH_SYNTAX_MINIMAL_MAJOR_TAG
     ) {
       throw new Error(
-        `The 'dotnet-version' was supplied in invalid format: ${this.inputVersion}! The A.B.Cxx syntax is available since the .NET 5.0 release.`
+        `The '${this.inputName}' was supplied in invalid format: ${this.inputVersion}! The A.B.Cxx syntax is available since the .NET 5.0 release.`
       );
     }
     return majorTag ? true : false;
@@ -456,6 +457,76 @@ export class DotnetCoreInstaller {
     }
 
     return this.parseInstalledVersion(dotnetInstallOutput.stdout);
+  }
+
+  public async installRuntime(): Promise<string | null> {
+    const versionResolver = new DotnetVersionResolver(
+      this.version,
+      this.quality,
+      undefined,
+      'dotnet-runtime'
+    );
+    const dotnetVersion = await versionResolver.createDotnetVersion();
+
+    const architectureArguments =
+      this.architecture &&
+      normalizeArch(this.architecture) !== normalizeArch(os.arch())
+        ? [
+            IS_WINDOWS ? '-InstallDir' : '--install-dir',
+            IS_WINDOWS
+              ? `"${path.join(DotnetInstallDir.dirPath, this.architecture)}"`
+              : path.join(DotnetInstallDir.dirPath, this.architecture)
+          ]
+        : [];
+
+    /**
+     * Install .NET runtime (Microsoft.NETCore.App)
+     * Skip non-versioned files to avoid overwriting CLI
+     */
+    const dotnetRuntimeOutput = await new DotnetInstallScript()
+      .useArchitecture(this.architecture)
+      // If dotnet CLI is already installed - avoid overwriting it
+      .useArguments(
+        IS_WINDOWS ? '-SkipNonVersionedFiles' : '--skip-non-versioned-files'
+      )
+      // Install .NET runtime (Microsoft.NETCore.App)
+      .useArguments(IS_WINDOWS ? '-Runtime' : '--runtime', 'dotnet')
+      // Use version provided by user
+      .useVersion(dotnetVersion, this.quality)
+      .useArguments(...architectureArguments)
+      .execute();
+
+    if (dotnetRuntimeOutput.exitCode) {
+      throw new Error(
+        `Failed to install dotnet runtime, exit code: ${dotnetRuntimeOutput.exitCode}. ${dotnetRuntimeOutput.stderr}`
+      );
+    }
+
+    /**
+     * Install ASP.NET Core runtime (Microsoft.AspNetCore.App)
+     * Skip non-versioned files to avoid overwriting CLI
+     */
+    const aspnetcoreRuntimeOutput = await new DotnetInstallScript()
+      .useArchitecture(this.architecture)
+      // If dotnet CLI is already installed - avoid overwriting it
+      .useArguments(
+        IS_WINDOWS ? '-SkipNonVersionedFiles' : '--skip-non-versioned-files'
+      )
+      // Install ASP.NET Core runtime (Microsoft.AspNetCore.App)
+      .useArguments(IS_WINDOWS ? '-Runtime' : '--runtime', 'aspnetcore')
+      // Use version provided by user
+      .useVersion(dotnetVersion, this.quality)
+      .useArguments(...architectureArguments)
+      .execute();
+
+    if (aspnetcoreRuntimeOutput.exitCode) {
+      throw new Error(
+        `Failed to install aspnetcore runtime, exit code: ${aspnetcoreRuntimeOutput.exitCode}. ${aspnetcoreRuntimeOutput.stderr}`
+      );
+    }
+
+    // Return the .NET runtime version (both should be the same version)
+    return this.parseInstalledVersion(dotnetRuntimeOutput.stdout);
   }
 
   private parseInstalledVersion(stdout: string): string | null {

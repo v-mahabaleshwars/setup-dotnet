@@ -45087,11 +45087,13 @@ const LATEST_PATCH_SYNTAX_MINIMAL_MAJOR_TAG = 5;
 class DotnetVersionResolver {
     quality;
     dotnetChannel;
+    inputName;
     inputVersion;
     resolvedArgument;
-    constructor(version, quality = '', dotnetChannel) {
+    constructor(version, quality = '', dotnetChannel, inputName = 'dotnet-version') {
         this.quality = quality;
         this.dotnetChannel = dotnetChannel;
+        this.inputName = inputName;
         this.inputVersion = version.trim();
         this.resolvedArgument = { type: '', value: '', qualityFlag: false };
     }
@@ -45129,7 +45131,7 @@ class DotnetVersionResolver {
             warning(`The 'dotnet-channel' input is only supported when 'dotnet-version' is set to 'latest'.`);
         }
         if (!semver_default().validRange(this.inputVersion) && !this.isLatestPatchSyntax()) {
-            throw new Error(`The 'dotnet-version' was supplied in invalid format: ${this.inputVersion}! Supported syntax: A.B.C, A.B, A.B.x, A, A.x, A.B.Cxx, latest`);
+            throw new Error(`The '${this.inputName}' was supplied in invalid format: ${this.inputVersion}! Supported syntax: A.B.C, A.B, A.B.x, A, A.x, A.B.Cxx, latest`);
         }
         if (semver_default().valid(this.inputVersion)) {
             this.createVersionArgument();
@@ -45145,7 +45147,7 @@ class DotnetVersionResolver {
         const majorTag = this.inputVersion.match(/^(?<majorTag>\d+)\.\d+\.\d{1}x{2}$/)?.groups?.majorTag;
         if (majorTag &&
             parseInt(majorTag) < LATEST_PATCH_SYNTAX_MINIMAL_MAJOR_TAG) {
-            throw new Error(`The 'dotnet-version' was supplied in invalid format: ${this.inputVersion}! The A.B.Cxx syntax is available since the .NET 5.0 release.`);
+            throw new Error(`The '${this.inputName}' was supplied in invalid format: ${this.inputVersion}! The A.B.Cxx syntax is available since the .NET 5.0 release.`);
         }
         return majorTag ? true : false;
     }
@@ -45415,6 +45417,55 @@ class DotnetCoreInstaller {
             throw new Error(`Failed to install dotnet, exit code: ${dotnetInstallOutput.exitCode}. ${dotnetInstallOutput.stderr}`);
         }
         return this.parseInstalledVersion(dotnetInstallOutput.stdout);
+    }
+    async installRuntime() {
+        const versionResolver = new DotnetVersionResolver(this.version, this.quality, undefined, 'dotnet-runtime');
+        const dotnetVersion = await versionResolver.createDotnetVersion();
+        const architectureArguments = this.architecture &&
+            normalizeArch(this.architecture) !== normalizeArch(external_os_default().arch())
+            ? [
+                utils_IS_WINDOWS ? '-InstallDir' : '--install-dir',
+                utils_IS_WINDOWS
+                    ? `"${external_path_default().join(DotnetInstallDir.dirPath, this.architecture)}"`
+                    : external_path_default().join(DotnetInstallDir.dirPath, this.architecture)
+            ]
+            : [];
+        /**
+         * Install .NET runtime (Microsoft.NETCore.App)
+         * Skip non-versioned files to avoid overwriting CLI
+         */
+        const dotnetRuntimeOutput = await new DotnetInstallScript()
+            .useArchitecture(this.architecture)
+            // If dotnet CLI is already installed - avoid overwriting it
+            .useArguments(utils_IS_WINDOWS ? '-SkipNonVersionedFiles' : '--skip-non-versioned-files')
+            // Install .NET runtime (Microsoft.NETCore.App)
+            .useArguments(utils_IS_WINDOWS ? '-Runtime' : '--runtime', 'dotnet')
+            // Use version provided by user
+            .useVersion(dotnetVersion, this.quality)
+            .useArguments(...architectureArguments)
+            .execute();
+        if (dotnetRuntimeOutput.exitCode) {
+            throw new Error(`Failed to install dotnet runtime, exit code: ${dotnetRuntimeOutput.exitCode}. ${dotnetRuntimeOutput.stderr}`);
+        }
+        /**
+         * Install ASP.NET Core runtime (Microsoft.AspNetCore.App)
+         * Skip non-versioned files to avoid overwriting CLI
+         */
+        const aspnetcoreRuntimeOutput = await new DotnetInstallScript()
+            .useArchitecture(this.architecture)
+            // If dotnet CLI is already installed - avoid overwriting it
+            .useArguments(utils_IS_WINDOWS ? '-SkipNonVersionedFiles' : '--skip-non-versioned-files')
+            // Install ASP.NET Core runtime (Microsoft.AspNetCore.App)
+            .useArguments(utils_IS_WINDOWS ? '-Runtime' : '--runtime', 'aspnetcore')
+            // Use version provided by user
+            .useVersion(dotnetVersion, this.quality)
+            .useArguments(...architectureArguments)
+            .execute();
+        if (aspnetcoreRuntimeOutput.exitCode) {
+            throw new Error(`Failed to install aspnetcore runtime, exit code: ${aspnetcoreRuntimeOutput.exitCode}. ${aspnetcoreRuntimeOutput.stderr}`);
+        }
+        // Return the .NET runtime version (both should be the same version)
+        return this.parseInstalledVersion(dotnetRuntimeOutput.stdout);
     }
     parseInstalledVersion(stdout) {
         const regex = /(?<version>\d+\.\d+\.\d+[a-z0-9._-]*)/gm;
@@ -106598,6 +106649,7 @@ async function run() {
         //
         // dotnet-version is optional, but needs to be provided for most use cases.
         // If supplied, install / use from the tool cache.
+        // dotnet-runtime is optional and allows installing runtime-only versions.
         // global-version-file may be specified to point to a specific global.json
         // and will be used to install an additional version.
         // If not supplied, look for version in ./global.json.
@@ -106605,7 +106657,9 @@ async function run() {
         // Proxy, auth, (etc) are still set up, even if no version is identified
         //
         const versions = getMultilineInput('dotnet-version');
+        const runtimeVersions = getMultilineInput('dotnet-runtime');
         const installedDotnetVersions = [];
+        const installedRuntimeVersions = [];
         const architecture = getArchitectureInput();
         let dotnetChannel = getInput('dotnet-channel');
         const isLatestRequested = versions.some(version => version && version.toLowerCase() === 'latest');
@@ -106637,12 +106691,12 @@ async function run() {
             if (external_fs_namespaceObject.existsSync(globalJsonPath)) {
                 versions.push(getVersionFromGlobalJson(globalJsonPath));
             }
-            else {
+            else if (!runtimeVersions.length) {
                 info(`The global.json wasn't found in the root directory. No .NET version will be installed.`);
             }
         }
+        const quality = getInput('dotnet-quality');
         if (versions.length) {
-            const quality = getInput('dotnet-quality');
             if (quality && !qualityOptions.includes(quality)) {
                 throw new Error(`Value '${quality}' is not supported for the 'dotnet-quality' option. Supported values are: daily, preview, ga.`);
             }
@@ -106677,12 +106731,31 @@ async function run() {
                 }
             }
         }
+        if (runtimeVersions.length) {
+            let dotnetInstaller;
+            const uniqueRuntimeVersions = new Set(runtimeVersions.map(v => (v.toLowerCase() === 'latest' ? 'latest' : v)));
+            for (const runtimeVersion of uniqueRuntimeVersions) {
+                dotnetInstaller = new DotnetCoreInstaller(runtimeVersion, quality, architecture);
+                const installedRuntimeVersion = await dotnetInstaller.installRuntime();
+                installedRuntimeVersions.push(installedRuntimeVersion);
+            }
+            // Ensure PATH is set (may have been set already by SDK installation)
+            if (!versions.length) {
+                if (architecture &&
+                    normalizeArch(architecture) !== normalizeArch(external_os_default().arch())) {
+                    process.env['DOTNET_INSTALL_DIR'] = external_path_default().join(DotnetInstallDir.dirPath, architecture);
+                }
+                DotnetInstallDir.addToPath();
+            }
+        }
         const sourceUrl = getInput('source-url');
         const configFile = getInput('config-file');
         if (sourceUrl) {
             configAuthentication(sourceUrl, configFile);
         }
-        outputInstalledVersion(installedDotnetVersions, globalJsonFileInput);
+        outputInstalledVersion(installedDotnetVersions.length
+            ? installedDotnetVersions
+            : installedRuntimeVersions, globalJsonFileInput);
         if (getBooleanInput('cache') && isCacheFeatureAvailable()) {
             const cacheDependencyPath = getInput('cache-dependency-path');
             await cache_restore_restoreCache(cacheDependencyPath);

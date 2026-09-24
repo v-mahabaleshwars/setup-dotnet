@@ -47,6 +47,7 @@ export async function run() {
     //
     // dotnet-version is optional, but needs to be provided for most use cases.
     // If supplied, install / use from the tool cache.
+    // dotnet-runtime is optional and allows installing runtime-only versions.
     // global-version-file may be specified to point to a specific global.json
     // and will be used to install an additional version.
     // If not supplied, look for version in ./global.json.
@@ -54,7 +55,9 @@ export async function run() {
     // Proxy, auth, (etc) are still set up, even if no version is identified
     //
     const versions = core.getMultilineInput('dotnet-version');
+    const runtimeVersions = core.getMultilineInput('dotnet-runtime');
     const installedDotnetVersions: (string | null)[] = [];
+    const installedRuntimeVersions: (string | null)[] = [];
     const architecture = getArchitectureInput();
     let dotnetChannel = core.getInput('dotnet-channel');
 
@@ -96,16 +99,16 @@ export async function run() {
       const globalJsonPath = path.join(process.cwd(), 'global.json');
       if (fs.existsSync(globalJsonPath)) {
         versions.push(getVersionFromGlobalJson(globalJsonPath));
-      } else {
+      } else if (!runtimeVersions.length) {
         core.info(
           `The global.json wasn't found in the root directory. No .NET version will be installed.`
         );
       }
     }
 
-    if (versions.length) {
-      const quality = core.getInput('dotnet-quality') as QualityOptions;
+    const quality = core.getInput('dotnet-quality') as QualityOptions;
 
+    if (versions.length) {
       if (quality && !qualityOptions.includes(quality)) {
         throw new Error(
           `Value '${quality}' is not supported for the 'dotnet-quality' option. Supported values are: daily, preview, ga.`
@@ -161,13 +164,47 @@ export async function run() {
       }
     }
 
+    if (runtimeVersions.length) {
+      let dotnetInstaller: DotnetCoreInstaller;
+      const uniqueRuntimeVersions = new Set<string>(
+        runtimeVersions.map(v => (v.toLowerCase() === 'latest' ? 'latest' : v))
+      );
+      for (const runtimeVersion of uniqueRuntimeVersions) {
+        dotnetInstaller = new DotnetCoreInstaller(
+          runtimeVersion,
+          quality,
+          architecture
+        );
+        const installedRuntimeVersion = await dotnetInstaller.installRuntime();
+        installedRuntimeVersions.push(installedRuntimeVersion);
+      }
+      // Ensure PATH is set (may have been set already by SDK installation)
+      if (!versions.length) {
+        if (
+          architecture &&
+          normalizeArch(architecture) !== normalizeArch(os.arch())
+        ) {
+          process.env['DOTNET_INSTALL_DIR'] = path.join(
+            DotnetInstallDir.dirPath,
+            architecture
+          );
+        }
+        DotnetInstallDir.addToPath();
+      }
+    }
+
     const sourceUrl: string = core.getInput('source-url');
     const configFile: string = core.getInput('config-file');
     if (sourceUrl) {
       auth.configAuthentication(sourceUrl, configFile);
     }
 
-    outputInstalledVersion(installedDotnetVersions, globalJsonFileInput);
+    outputInstalledVersion(
+      installedDotnetVersions.length
+        ? installedDotnetVersions
+        : installedRuntimeVersions,
+      globalJsonFileInput
+    );
 
     if (core.getBooleanInput('cache') && isCacheFeatureAvailable()) {
       const cacheDependencyPath = core.getInput('cache-dependency-path');
