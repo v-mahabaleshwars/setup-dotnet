@@ -53,7 +53,7 @@ outputs:
   cache-hit:
     description: 'A boolean value to indicate if a cache was hit.'
   dotnet-version:
-    description: 'Contains the installed by action .NET SDK version for reuse.'
+    description: 'Contains the installed by action .NET SDK version for reuse. If no SDK is installed by the action (runtime-only usage via dotnet-runtime), contains the installed .NET runtime version instead.'
 runs:
   using: 'node24'
   main: 'dist/setup/index.js'

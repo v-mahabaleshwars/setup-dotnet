@@ -389,7 +389,7 @@ When the input is not set, the action reads the `DOTNET_CHECK_LATEST` environmen
 
 ### `dotnet-version`
 
-Using the **dotnet-version** output it's possible to get the installed by the action .NET SDK version. 
+Using the **dotnet-version** output it's possible to get the installed by the action .NET SDK version. If no SDK is installed by the action (for example, when only `dotnet-runtime` is specified), the output contains the installed .NET runtime version instead.
 
 **Single version installation**
 
