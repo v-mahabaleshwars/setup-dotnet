@@ -45145,7 +45145,7 @@ class DotnetVersionResolver {
             warning(`The 'dotnet-channel' input is only supported when 'dotnet-version' is set to 'latest'.`);
         }
         if (!semver_default().validRange(this.inputVersion) && !this.isLatestPatchSyntax()) {
-            throw new Error(`The '${this.inputName}' was supplied in invalid format: ${this.inputVersion}! Supported syntax: A.B.C, A.B, A.B.x, A, A.x, A.B.Cxx, latest`);
+            throw new Error(`The '${this.inputName}' was supplied in invalid format: ${this.inputVersion}! Supported syntax: ${this.getSupportedSyntax()}`);
         }
         if (semver_default().valid(this.inputVersion)) {
             this.createVersionArgument();
@@ -45157,8 +45157,20 @@ class DotnetVersionResolver {
     isNumericTag(versionTag) {
         return /^\d+$/.test(versionTag);
     }
+    isRuntimeInput() {
+        return this.inputName === 'dotnet-runtime';
+    }
+    getSupportedSyntax() {
+        return this.isRuntimeInput()
+            ? 'A.B.C, A.B, A.B.x, A, A.x, latest'
+            : 'A.B.C, A.B, A.B.x, A, A.x, A.B.Cxx, latest';
+    }
     isLatestPatchSyntax() {
         const majorTag = this.inputVersion.match(/^(?<majorTag>\d+)\.\d+\.\d{1}x{2}$/)?.groups?.majorTag;
+        // Feature bands (A.B.Cxx) exist only for SDKs, so the install script can't resolve them for runtimes.
+        if (majorTag && this.isRuntimeInput()) {
+            throw new Error(`The '${this.inputName}' was supplied in invalid format: ${this.inputVersion}! The A.B.Cxx feature band syntax applies only to .NET SDKs and is supported only by 'dotnet-version'. Supported syntax: ${this.getSupportedSyntax()}`);
+        }
         if (majorTag &&
             parseInt(majorTag) < LATEST_PATCH_SYNTAX_MINIMAL_MAJOR_TAG) {
             throw new Error(`The '${this.inputName}' was supplied in invalid format: ${this.inputVersion}! The A.B.Cxx syntax is available since the .NET 5.0 release.`);
@@ -106930,10 +106942,12 @@ async function run() {
             }
         }
         const quality = getInput('dotnet-quality');
+        if ((versions.length || runtimeVersions.length) &&
+            quality &&
+            !qualityOptions.includes(quality)) {
+            throw new Error(`Value '${quality}' is not supported for the 'dotnet-quality' option. Supported values are: daily, preview, ga.`);
+        }
         if (versions.length) {
-            if (quality && !qualityOptions.includes(quality)) {
-                throw new Error(`Value '${quality}' is not supported for the 'dotnet-quality' option. Supported values are: daily, preview, ga.`);
-            }
             const skipLtsPrepass = getBooleanInput('skip-lts-prepass');
             let dotnetInstaller;
             const uniqueVersions = new Set(versions.map(v => (v.toLowerCase() === 'latest' ? 'latest' : v)));

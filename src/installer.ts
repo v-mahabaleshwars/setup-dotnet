@@ -107,7 +107,7 @@ export class DotnetVersionResolver {
 
     if (!semver.validRange(this.inputVersion) && !this.isLatestPatchSyntax()) {
       throw new Error(
-        `The '${this.inputName}' was supplied in invalid format: ${this.inputVersion}! Supported syntax: A.B.C, A.B, A.B.x, A, A.x, A.B.Cxx, latest`
+        `The '${this.inputName}' was supplied in invalid format: ${this.inputVersion}! Supported syntax: ${this.getSupportedSyntax()}`
       );
     }
     if (semver.valid(this.inputVersion)) {
@@ -121,10 +121,26 @@ export class DotnetVersionResolver {
     return /^\d+$/.test(versionTag);
   }
 
+  private isRuntimeInput(): boolean {
+    return this.inputName === 'dotnet-runtime';
+  }
+
+  private getSupportedSyntax(): string {
+    return this.isRuntimeInput()
+      ? 'A.B.C, A.B, A.B.x, A, A.x, latest'
+      : 'A.B.C, A.B, A.B.x, A, A.x, A.B.Cxx, latest';
+  }
+
   private isLatestPatchSyntax() {
     const majorTag = this.inputVersion.match(
       /^(?<majorTag>\d+)\.\d+\.\d{1}x{2}$/
     )?.groups?.majorTag;
+    // Feature bands (A.B.Cxx) exist only for SDKs, so the install script can't resolve them for runtimes.
+    if (majorTag && this.isRuntimeInput()) {
+      throw new Error(
+        `The '${this.inputName}' was supplied in invalid format: ${this.inputVersion}! The A.B.Cxx feature band syntax applies only to .NET SDKs and is supported only by 'dotnet-version'. Supported syntax: ${this.getSupportedSyntax()}`
+      );
+    }
     if (
       majorTag &&
       parseInt(majorTag) < LATEST_PATCH_SYNTAX_MINIMAL_MAJOR_TAG

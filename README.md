@@ -60,6 +60,8 @@ The `dotnet-runtime` input allows you to install .NET runtimes separately from S
 
 When `dotnet-runtime` is specified, both the .NET Runtime (Microsoft.NETCore.App) and the ASP.NET Core Runtime (Microsoft.AspNetCore.App) are installed for each specified version. If no SDK is installed, the `dotnet-version` output will reflect the installed runtime version.
 
+`dotnet-runtime` doesn't change how the SDK is selected, so it doesn't suppress the SDK installation from `global.json`. For example, if only `dotnet-runtime` is set and the repository root contains a `global.json` file, the SDK version specified in that file is installed as well, and the `dotnet-version` output contains that SDK version.
+
 **Example: Install SDK 10 with runtimes 8 and 9**:
 ```yml
 steps:
@@ -82,7 +84,7 @@ The `dotnet-version` and `dotnet-runtime` inputs support the following syntax:
 - **A.B.C** (e.g 9.0.308 for an SDK, 9.0.9 for a runtime, 10.0.100-preview.1.25120.13) - installs exact version of .NET SDK or runtime
 - **A.B** or **A.B.x** (e.g. 8.0, 8.0.x) - installs the latest patch version on the channel `8.0`, including prerelease versions (preview, rc)
 - **A** or **A.x** (e.g. 8, 8.x) - installs the latest minor version of the specified major tag, including prerelease versions (preview, rc)
-- **A.B.Cxx** (e.g. 8.0.4xx) - available since `.NET 5.0` release. Installs the latest version of the specific release, including prerelease versions (preview, rc). 
+- **A.B.Cxx** (e.g. 8.0.4xx) - `dotnet-version` only, available since `.NET 5.0` release. Installs the latest version of the specific SDK feature band, including prerelease versions (preview, rc). Feature bands apply only to SDKs, so `dotnet-runtime` rejects this syntax; use **A.B** or **A.B.x** (e.g. 8.0.x) for the latest runtime patch instead. 
 - **latest** - dynamically resolves to the highest active .NET version. By default, it installs the latest **stable (GA)** version (excluding previews and end-of-life releases). For `dotnet-version`, it can be combined with `dotnet-channel` and `dotnet-quality`.
 
 ## Using with `dotnet-channel` input
@@ -389,7 +391,7 @@ When the input is not set, the action reads the `DOTNET_CHECK_LATEST` environmen
 
 ### `dotnet-version`
 
-Using the **dotnet-version** output it's possible to get the installed by the action .NET SDK version. If no SDK is installed by the action (for example, when only `dotnet-runtime` is specified), the output contains the installed .NET runtime version instead.
+Using the **dotnet-version** output it's possible to get the installed by the action .NET SDK version. If no SDK is installed by the action (for example, when only `dotnet-runtime` is specified and no `global.json` file is found), the output contains the installed .NET runtime version instead.
 
 **Single version installation**
 

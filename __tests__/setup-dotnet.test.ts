@@ -148,6 +148,55 @@ describe('setup-dotnet tests', () => {
       expect(setFailedSpy).toHaveBeenCalledWith(expectedErrorMessage);
     });
 
+    it.each(['8.0.x', '8.0.0'])(
+      'should fail the action if quality is supplied but its value is not supported and only dotnet-runtime (%s) is provided',
+      async runtimeVersion => {
+        inputs['global-json-file'] = '';
+        inputs['dotnet-version'] = [];
+        inputs['dotnet-runtime'] = [runtimeVersion];
+        inputs['dotnet-quality'] = 'fictitiousQuality';
+
+        existsSyncSpy.mockReturnValue(false);
+        installRuntimeSpy.mockImplementation(() =>
+          Promise.resolve(runtimeVersion)
+        );
+
+        const expectedErrorMessage = `Value '${inputs['dotnet-quality']}' is not supported for the 'dotnet-quality' option. Supported values are: daily, preview, ga.`;
+
+        await setup.run();
+        expect(setFailedSpy).toHaveBeenCalledWith(expectedErrorMessage);
+        expect(installDotnetSpy).not.toHaveBeenCalled();
+        expect(installRuntimeSpy).not.toHaveBeenCalled();
+      }
+    );
+
+    it('should install dotnet-runtime versions if quality is supplied and its value is supported', async () => {
+      inputs['global-json-file'] = '';
+      inputs['dotnet-version'] = [];
+      inputs['dotnet-runtime'] = ['8.0.x'];
+      inputs['dotnet-quality'] = 'preview';
+
+      existsSyncSpy.mockReturnValue(false);
+      installRuntimeSpy.mockImplementation(() => Promise.resolve('8.0.11'));
+
+      await setup.run();
+      expect(setFailedSpy).not.toHaveBeenCalled();
+      expect(installRuntimeSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it(`shouldn't fail the action on an unsupported quality value if neither an SDK nor a runtime installation is requested`, async () => {
+      inputs['global-json-file'] = '';
+      inputs['dotnet-version'] = [];
+      inputs['dotnet-quality'] = 'fictitiousQuality';
+
+      existsSyncSpy.mockReturnValue(false);
+
+      await setup.run();
+      expect(setFailedSpy).not.toHaveBeenCalled();
+      expect(installDotnetSpy).not.toHaveBeenCalled();
+      expect(installRuntimeSpy).not.toHaveBeenCalled();
+    });
+
     it('should call installDotnet() multiple times if dotnet-version multiline input is provided', async () => {
       inputs['global-json-file'] = '';
       inputs['dotnet-version'] = ['9.0', '10.0'];

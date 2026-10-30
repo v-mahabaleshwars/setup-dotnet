@@ -126,13 +126,17 @@ export async function run() {
 
     const quality = core.getInput('dotnet-quality') as QualityOptions;
 
-    if (versions.length) {
-      if (quality && !qualityOptions.includes(quality)) {
-        throw new Error(
-          `Value '${quality}' is not supported for the 'dotnet-quality' option. Supported values are: daily, preview, ga.`
-        );
-      }
+    if (
+      (versions.length || runtimeVersions.length) &&
+      quality &&
+      !qualityOptions.includes(quality)
+    ) {
+      throw new Error(
+        `Value '${quality}' is not supported for the 'dotnet-quality' option. Supported values are: daily, preview, ga.`
+      );
+    }
 
+    if (versions.length) {
       const skipLtsPrepass = core.getBooleanInput('skip-lts-prepass');
 
       let dotnetInstaller: DotnetCoreInstaller;

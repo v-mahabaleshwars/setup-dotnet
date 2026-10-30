@@ -1512,6 +1512,21 @@ describe('installer tests', () => {
         ).join(' ');
         expect(aspnetcoreScriptArguments).toContain(expectedArgument);
       });
+
+      it(`should reject A.B.Cxx feature band syntax without running the runtime installation scripts`, async () => {
+        const inputVersion = '8.0.4xx';
+        const inputQuality = '';
+
+        const dotnetInstaller = new installer.DotnetCoreInstaller(
+          inputVersion,
+          inputQuality
+        );
+
+        await expect(dotnetInstaller.installRuntime()).rejects.toThrow(
+          `The 'dotnet-runtime' was supplied in invalid format: ${inputVersion}! The A.B.Cxx feature band syntax applies only to .NET SDKs and is supported only by 'dotnet-version'.`
+        );
+        expect(getExecOutputSpy).not.toHaveBeenCalled();
+      });
     });
 
     describe('addToPath() tests', () => {
@@ -1713,6 +1728,60 @@ describe('installer tests', () => {
           `The 'dotnet-runtime' was supplied in invalid format: ${version}!`
         );
       });
+
+      it(`should keep accepting A.B.Cxx feature band syntax for 'dotnet-version'`, async () => {
+        const version = '8.0.4xx';
+        const dotnetVersionResolver = new installer.DotnetVersionResolver(
+          version,
+          '',
+          undefined,
+          'dotnet-version'
+        );
+        const versionObject = await dotnetVersionResolver.createDotnetVersion();
+
+        expect(versionObject.type.toLowerCase().includes('channel')).toBe(true);
+        expect(versionObject.value).toBe(version);
+      });
+
+      each(['8.0.4xx', '10.0.1xx', '3.1.1xx']).test(
+        "should reject A.B.Cxx feature band syntax (%s) for 'dotnet-runtime'",
+        async version => {
+          const dotnetVersionResolver = new installer.DotnetVersionResolver(
+            version,
+            '',
+            undefined,
+            'dotnet-runtime'
+          );
+
+          await expect(
+            async () => await dotnetVersionResolver.createDotnetVersion()
+          ).rejects.toThrow(
+            `The 'dotnet-runtime' was supplied in invalid format: ${version}! The A.B.Cxx feature band syntax applies only to .NET SDKs and is supported only by 'dotnet-version'.`
+          );
+        }
+      );
+
+      each([
+        ['dotnet-version', 'A.B.C, A.B, A.B.x, A, A.x, A.B.Cxx, latest'],
+        ['dotnet-runtime', 'A.B.C, A.B, A.B.x, A, A.x, latest']
+      ]).test(
+        "should list the syntax supported by '%s' in the invalid format error message",
+        async (inputName, supportedSyntax) => {
+          const version = 'invalid';
+          const dotnetVersionResolver = new installer.DotnetVersionResolver(
+            version,
+            '',
+            undefined,
+            inputName
+          );
+
+          await expect(
+            async () => await dotnetVersionResolver.createDotnetVersion()
+          ).rejects.toThrow(
+            `The '${inputName}' was supplied in invalid format: ${version}! Supported syntax: ${supportedSyntax}`
+          );
+        }
+      );
     });
   });
 });
