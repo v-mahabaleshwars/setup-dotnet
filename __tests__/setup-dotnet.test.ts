@@ -75,6 +75,11 @@ describe('setup-dotnet tests', () => {
     'installDotnet'
   );
 
+  const installRuntimeSpy = jest.spyOn(
+    DotnetCoreInstaller.prototype,
+    'installRuntime'
+  );
+
   const isCacheFeatureAvailableSpy =
     cacheUtils.isCacheFeatureAvailable as jest.Mock;
   const restoreCacheSpy = cacheRestore.restoreCache as jest.Mock;
@@ -84,7 +89,10 @@ describe('setup-dotnet tests', () => {
   describe('run() tests', () => {
     beforeEach(() => {
       DotnetInstallDir.addToPath = jest.fn();
-      getMultilineInputSpy.mockImplementation(input => inputs[input as string]);
+      inputs['dotnet-runtime'] = [];
+      getMultilineInputSpy.mockImplementation(
+        input => inputs[input as string] ?? []
+      );
       getInputSpy.mockImplementation(input => inputs[input as string]);
       getBooleanInputSpy.mockImplementation(input => {
         const value = inputs[input as string];
@@ -140,6 +148,55 @@ describe('setup-dotnet tests', () => {
       expect(setFailedSpy).toHaveBeenCalledWith(expectedErrorMessage);
     });
 
+    it.each(['8.0.x', '8.0.0'])(
+      'should fail the action if quality is supplied but its value is not supported and only dotnet-runtime (%s) is provided',
+      async runtimeVersion => {
+        inputs['global-json-file'] = '';
+        inputs['dotnet-version'] = [];
+        inputs['dotnet-runtime'] = [runtimeVersion];
+        inputs['dotnet-quality'] = 'fictitiousQuality';
+
+        existsSyncSpy.mockReturnValue(false);
+        installRuntimeSpy.mockImplementation(() =>
+          Promise.resolve(runtimeVersion)
+        );
+
+        const expectedErrorMessage = `Value '${inputs['dotnet-quality']}' is not supported for the 'dotnet-quality' option. Supported values are: daily, preview, ga.`;
+
+        await setup.run();
+        expect(setFailedSpy).toHaveBeenCalledWith(expectedErrorMessage);
+        expect(installDotnetSpy).not.toHaveBeenCalled();
+        expect(installRuntimeSpy).not.toHaveBeenCalled();
+      }
+    );
+
+    it('should install dotnet-runtime versions if quality is supplied and its value is supported', async () => {
+      inputs['global-json-file'] = '';
+      inputs['dotnet-version'] = [];
+      inputs['dotnet-runtime'] = ['8.0.x'];
+      inputs['dotnet-quality'] = 'preview';
+
+      existsSyncSpy.mockReturnValue(false);
+      installRuntimeSpy.mockImplementation(() => Promise.resolve('8.0.11'));
+
+      await setup.run();
+      expect(setFailedSpy).not.toHaveBeenCalled();
+      expect(installRuntimeSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it(`shouldn't fail the action on an unsupported quality value if neither an SDK nor a runtime installation is requested`, async () => {
+      inputs['global-json-file'] = '';
+      inputs['dotnet-version'] = [];
+      inputs['dotnet-quality'] = 'fictitiousQuality';
+
+      existsSyncSpy.mockReturnValue(false);
+
+      await setup.run();
+      expect(setFailedSpy).not.toHaveBeenCalled();
+      expect(installDotnetSpy).not.toHaveBeenCalled();
+      expect(installRuntimeSpy).not.toHaveBeenCalled();
+    });
+
     it('should call installDotnet() multiple times if dotnet-version multiline input is provided', async () => {
       inputs['global-json-file'] = '';
       inputs['dotnet-version'] = ['9.0', '10.0'];
@@ -192,6 +249,33 @@ describe('setup-dotnet tests', () => {
         inputs['source-url'],
         inputs['config-file']
       );
+    });
+
+    it('should call installRuntime() for each dotnet-runtime version provided', async () => {
+      inputs['global-json-file'] = '';
+      inputs['dotnet-version'] = [];
+      inputs['dotnet-runtime'] = ['8.0.x', '9.0.x'];
+      inputs['dotnet-quality'] = '';
+
+      installRuntimeSpy.mockImplementation(() => Promise.resolve(''));
+
+      await setup.run();
+      expect(installRuntimeSpy).toHaveBeenCalledTimes(2);
+      expect(DotnetInstallDir.addToPath).toHaveBeenCalledTimes(1);
+    });
+
+    it('should set the dotnet-version output from the runtime version when only dotnet-runtime is provided', async () => {
+      inputs['global-json-file'] = '';
+      inputs['dotnet-version'] = [];
+      inputs['dotnet-runtime'] = ['8.0.x'];
+      inputs['dotnet-quality'] = '';
+
+      installRuntimeSpy.mockImplementation(() => Promise.resolve('8.0.11'));
+      maxSatisfyingSpy.mockImplementation(() => '8.0.11');
+      setOutputSpy.mockImplementation(() => {});
+
+      await setup.run();
+      expect(setOutputSpy).toHaveBeenCalledWith('dotnet-version', '8.0.11');
     });
 
     it('should call setOutput() after installation complete successfully', async () => {
