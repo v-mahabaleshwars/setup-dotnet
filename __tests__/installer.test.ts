@@ -1402,6 +1402,8 @@ describe('installer tests', () => {
         await expect(dotnetInstaller.installRuntime()).rejects.toThrow(
           `Failed to install dotnet runtime, exit code: 1. ${errorMessage}`
         );
+        // The aspnetcore installation must not run after the dotnet failure
+        expect(getExecOutputSpy).toHaveBeenCalledTimes(1);
       });
 
       it('should throw the error in case of non-zero exit code of the ASP.NET Core runtime installation script. The error message should contain logs.', async () => {
@@ -1496,6 +1498,61 @@ describe('installer tests', () => {
           : `--runtime aspnetcore`;
 
         expect(aspnetcoreScriptArguments).toContain(expectedAspnetcoreArgument);
+      });
+
+      it(`should supply the same shared arguments to both runtime installation scripts for a cross-arch install`, async () => {
+        const inputVersion = '8.0.x';
+        const inputQuality = 'preview';
+        const inputArchitecture = 'x64';
+        const stdout = `Fictitious dotnet runtime version 8.0.11 is installed`;
+
+        getExecOutputSpy.mockImplementation(() => {
+          return Promise.resolve({
+            exitCode: 0,
+            stdout: `${stdout}`,
+            stderr: ''
+          });
+        });
+        const archSpy = jest.spyOn(os, 'arch').mockReturnValue('arm64');
+
+        try {
+          const dotnetInstaller = new installer.DotnetCoreInstaller(
+            inputVersion,
+            inputQuality,
+            inputArchitecture
+          );
+          await dotnetInstaller.installRuntime();
+        } finally {
+          archSpy.mockRestore();
+        }
+
+        const installDir = path.join(
+          installer.DotnetInstallDir.dirPath,
+          inputArchitecture
+        );
+        const expectedSharedArguments = IS_WINDOWS
+          ? [
+              '-SkipNonVersionedFiles',
+              `-Architecture ${inputArchitecture}`,
+              '-Channel 8.0',
+              `-Quality ${inputQuality}`,
+              `-InstallDir "${installDir}"`
+            ]
+          : [
+              '--skip-non-versioned-files',
+              `--architecture ${inputArchitecture}`,
+              '--channel 8.0',
+              `--quality ${inputQuality}`,
+              `--install-dir ${installDir}`
+            ];
+
+        expect(getExecOutputSpy).toHaveBeenCalledTimes(2);
+        for (const [, scriptArguments] of getExecOutputSpy.mock.calls) {
+          const joinedArguments = (scriptArguments as string[]).join(' ');
+          for (const expectedArgument of expectedSharedArguments) {
+            expect(joinedArguments).toContain(expectedArgument);
+          }
+        }
       });
 
       it(`should supply 'version' argument to both runtime installation scripts if supplied version is in A.B.C syntax`, async () => {

@@ -278,6 +278,39 @@ describe('setup-dotnet tests', () => {
       expect(setOutputSpy).toHaveBeenCalledWith('dotnet-version', '8.0.11');
     });
 
+    it('should install the SDK from the root global.json and set the dotnet-version output from the SDK version when only dotnet-runtime is provided', async () => {
+      inputs['global-json-file'] = '';
+      inputs['dotnet-version'] = [];
+      inputs['dotnet-runtime'] = ['8.0.x'];
+      inputs['dotnet-quality'] = '';
+
+      existsSyncSpy.mockReturnValue(true);
+      readFileSyncSpy.mockReturnValue(
+        JSON.stringify({sdk: {version: '10.0.101'}})
+      );
+
+      let capturedSdkVersion: string | undefined;
+      installDotnetSpy.mockImplementation(function (this: any) {
+        capturedSdkVersion = this.version;
+        return Promise.resolve('10.0.101');
+      });
+      installRuntimeSpy.mockImplementation(() => Promise.resolve('8.0.11'));
+      maxSatisfyingSpy.mockImplementation(() => '10.0.101');
+      setOutputSpy.mockImplementation(() => {});
+
+      await setup.run();
+
+      expect(setFailedSpy).not.toHaveBeenCalled();
+      expect(installDotnetSpy).toHaveBeenCalledTimes(1);
+      expect(capturedSdkVersion).toBe('10.0.101');
+      expect(installRuntimeSpy).toHaveBeenCalledTimes(1);
+      expect(maxSatisfyingSpy).toHaveBeenCalledWith(['10.0.101'], '*', {
+        includePrerelease: true
+      });
+      expect(setOutputSpy).toHaveBeenCalledWith('dotnet-version', '10.0.101');
+      expect(setOutputSpy).not.toHaveBeenCalledWith('dotnet-version', '8.0.11');
+    });
+
     it('should call setOutput() after installation complete successfully', async () => {
       inputs['dotnet-version'] = ['10.0.101'];
 
