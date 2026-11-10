@@ -158,16 +158,7 @@ export async function run() {
         const installedVersion = await dotnetInstaller.installDotnet();
         installedDotnetVersions.push(installedVersion);
       }
-      if (
-        architecture &&
-        normalizeArch(architecture) !== normalizeArch(os.arch())
-      ) {
-        process.env['DOTNET_INSTALL_DIR'] = path.join(
-          DotnetInstallDir.dirPath,
-          architecture
-        );
-      }
-      DotnetInstallDir.addToPath();
+      addDotnetToPath(architecture);
 
       const workloadsInput = core.getInput('workloads');
       if (workloadsInput) {
@@ -209,16 +200,7 @@ export async function run() {
       }
       // Ensure PATH is set (may have been set already by SDK installation)
       if (!versions.length) {
-        if (
-          architecture &&
-          normalizeArch(architecture) !== normalizeArch(os.arch())
-        ) {
-          process.env['DOTNET_INSTALL_DIR'] = path.join(
-            DotnetInstallDir.dirPath,
-            architecture
-          );
-        }
-        DotnetInstallDir.addToPath();
+        addDotnetToPath(architecture);
       }
     }
 
@@ -250,6 +232,19 @@ export async function run() {
   } catch (error) {
     core.setFailed(error.message);
   }
+}
+
+function addDotnetToPath(architecture: SupportedArchitecture | ''): void {
+  if (
+    architecture &&
+    normalizeArch(architecture) !== normalizeArch(os.arch())
+  ) {
+    process.env['DOTNET_INSTALL_DIR'] = path.join(
+      DotnetInstallDir.dirPath,
+      architecture
+    );
+  }
+  DotnetInstallDir.addToPath();
 }
 
 function getArchitectureInput(): SupportedArchitecture | '' {

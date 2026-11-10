@@ -9,6 +9,7 @@ import {
 } from '@jest/globals';
 import semver from 'semver';
 import os from 'os';
+import path from 'path';
 
 jest.unstable_mockModule('@actions/core', () => ({
   getInput: jest.fn(),
@@ -276,6 +277,43 @@ describe('setup-dotnet tests', () => {
 
       await setup.run();
       expect(setOutputSpy).toHaveBeenCalledWith('dotnet-version', '8.0.11');
+    });
+
+    it('should set DOTNET_INSTALL_DIR to the architecture subdirectory for a cross-arch runtime-only install', async () => {
+      inputs['global-json-file'] = '';
+      inputs['dotnet-version'] = [];
+      inputs['dotnet-runtime'] = ['8.0.x'];
+      inputs['dotnet-quality'] = '';
+      inputs['architecture'] = 'x64';
+
+      existsSyncSpy.mockReturnValue(false);
+      installRuntimeSpy.mockImplementation(() => Promise.resolve('8.0.11'));
+
+      const originalInstallDir = process.env['DOTNET_INSTALL_DIR'];
+      // An explicit install dir avoids probing real system locations
+      process.env['DOTNET_INSTALL_DIR'] = path.join(
+        path.sep,
+        'fictitious',
+        'dotnet'
+      );
+      const expectedInstallDir = path.join(DotnetInstallDir.dirPath, 'x64');
+      const archSpy = jest.spyOn(os, 'arch').mockReturnValue('arm64');
+
+      try {
+        await setup.run();
+
+        expect(setFailedSpy).not.toHaveBeenCalled();
+        expect(process.env['DOTNET_INSTALL_DIR']).toBe(expectedInstallDir);
+        expect(DotnetInstallDir.addToPath).toHaveBeenCalledTimes(1);
+      } finally {
+        archSpy.mockRestore();
+        inputs['architecture'] = '';
+        if (originalInstallDir === undefined) {
+          delete process.env['DOTNET_INSTALL_DIR'];
+        } else {
+          process.env['DOTNET_INSTALL_DIR'] = originalInstallDir;
+        }
+      }
     });
 
     it('should install the SDK from the root global.json and set the dotnet-version output from the SDK version when only dotnet-runtime is provided', async () => {
