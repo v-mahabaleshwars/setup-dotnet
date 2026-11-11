@@ -79,6 +79,9 @@ export async function run() {
     const checkLatest = getCheckLatestInput();
     let dotnetChannel = core.getInput('dotnet-channel');
 
+    const isRuntimeLatestRequested = runtimeVersions.some(
+      version => version && version.toLowerCase() === 'latest'
+    );
     const isLatestRequested = versions.some(
       version => version && version.toLowerCase() === 'latest'
     );
@@ -89,13 +92,17 @@ export async function run() {
         );
       } else {
         core.warning(
-          `Value '${dotnetChannel}' is not supported for the 'dotnet-channel' option and will be ignored because 'dotnet-version' is not set to 'latest'. Supported values are: LTS, STS, A.B (e.g. 8.0), A.B.Cxx (e.g. 8.0.1xx).`
+          `Value '${dotnetChannel}' is not supported for the 'dotnet-channel' option and will be ignored. Supported values are: LTS, STS, A.B (e.g. 8.0), A.B.Cxx (e.g. 8.0.1xx, SDK only).`
         );
         dotnetChannel = '';
       }
-    } else if (dotnetChannel && !isLatestRequested) {
+    } else if (
+      dotnetChannel &&
+      !isLatestRequested &&
+      !isRuntimeLatestRequested
+    ) {
       core.warning(
-        `The 'dotnet-channel' input is only supported when 'dotnet-version' is set to 'latest'.`
+        `The 'dotnet-channel' input is only supported when 'dotnet-version' or 'dotnet-runtime' is set to 'latest'.`
       );
       dotnetChannel = '';
     }
@@ -193,7 +200,9 @@ export async function run() {
         dotnetInstaller = new DotnetCoreInstaller(
           runtimeVersion,
           quality,
-          architecture
+          architecture,
+          runtimeVersion.toLowerCase() === 'latest' ? dotnetChannel : undefined,
+          checkLatest
         );
         const installedRuntimeVersion = await dotnetInstaller.installRuntime();
         installedRuntimeVersions.push(installedRuntimeVersion);
@@ -201,6 +210,14 @@ export async function run() {
       // Ensure PATH is set (may have been set already by SDK installation)
       if (!versions.length) {
         addDotnetToPath(architecture);
+      } else if (
+        architecture &&
+        normalizeArch(architecture) !== normalizeArch(os.arch())
+      ) {
+        process.env['DOTNET_INSTALL_DIR'] = path.join(
+          DotnetInstallDir.dirPath,
+          architecture
+        );
       }
     }
 
