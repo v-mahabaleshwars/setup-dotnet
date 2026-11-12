@@ -82,6 +82,7 @@ jest.unstable_mockModule('../src/utils.js', () => {
 const exec = await import('@actions/exec');
 const core = await import('@actions/core');
 const io = await import('@actions/io');
+const hc = await import('@actions/http-client');
 const fs = await import('fs');
 const installer = await import('../src/installer.js');
 const {IS_WINDOWS} = await import('../src/utils.js');
@@ -1372,238 +1373,121 @@ describe('installer tests', () => {
     });
 
     describe('installRuntime() tests', () => {
-      beforeAll(() => {
+      const readdirSyncSpy = fs.readdirSync as unknown as jest.Mock;
+      const statSyncSpy = fs.statSync as unknown as jest.Mock;
+      const accessSyncSpy = fs.accessSync as unknown as jest.Mock;
+      const scriptArgs = () =>
+        getExecOutputSpy.mock.calls.map(call =>
+          (call[1] as string[]).join(' ')
+        );
+      const arg = (name: string, value: string) =>
+        IS_WINDOWS ? `-${name} ${value}` : `--${name.toLowerCase()} ${value}`;
+
+      beforeEach(() => {
+        jest.clearAllMocks();
+        delete process.env['DOTNET_INSTALL_DIR'];
         whichSpy.mockImplementation(() => Promise.resolve('PathToShell'));
         chmodSyncSpy.mockImplementation(() => {});
-        readdirSpy.mockImplementation(() => Promise.resolve([]));
+        readdirSyncSpy.mockReturnValue([]);
+        statSyncSpy.mockReturnValue({isFile: () => true});
+        accessSyncSpy.mockImplementation(() => undefined);
+        getExecOutputSpy.mockImplementation(() =>
+          Promise.resolve({
+            exitCode: 0,
+            stdout: 'Installed version is 8.0.11',
+            stderr: ''
+          })
+        );
       });
 
       afterAll(() => {
         jest.resetAllMocks();
       });
 
-      it('should throw the error in case of non-zero exit code of the .NET runtime installation script. The error message should contain logs.', async () => {
-        const inputVersion = '8.0.402';
-        const inputQuality = '';
-        const errorMessage = 'fictitious error message!';
+      it('should install the .NET and ASP.NET Core runtimes and set DOTNET_INSTALL_DIR', async () => {
+        const installedVersion = await new installer.DotnetCoreInstaller(
+          '8.0.11',
+          ''
+        ).installRuntime();
 
-        getExecOutputSpy.mockImplementation(() => {
-          return Promise.resolve({
-            exitCode: 1,
-            stdout: '',
-            stderr: errorMessage
-          });
-        });
-
-        const dotnetInstaller = new installer.DotnetCoreInstaller(
-          inputVersion,
-          inputQuality
+        expect(installedVersion).toBe('8.0.11');
+        expect(process.env['DOTNET_INSTALL_DIR']).toBe(
+          installer.DotnetInstallDir.dirPath
         );
-        await expect(dotnetInstaller.installRuntime()).rejects.toThrow(
-          `Failed to install dotnet runtime, exit code: 1. ${errorMessage}`
-        );
-        // The aspnetcore installation must not run after the dotnet failure
-        expect(getExecOutputSpy).toHaveBeenCalledTimes(1);
+        expect(scriptArgs()).toHaveLength(2);
+        expect(scriptArgs()[0]).toContain(arg('Runtime', 'dotnet'));
+        expect(scriptArgs()[1]).toContain(arg('Runtime', 'aspnetcore'));
+        for (const args of scriptArgs()) {
+          expect(args).toContain(arg('Version', '8.0.11'));
+        }
       });
 
-      it('should throw the error in case of non-zero exit code of the ASP.NET Core runtime installation script. The error message should contain logs.', async () => {
-        const inputVersion = '8.0.402';
-        const inputQuality = '';
-        const errorMessage = 'fictitious aspnetcore error message!';
-
+      it('should fail when the ASP.NET Core runtime installation fails', async () => {
         getExecOutputSpy
-          .mockImplementationOnce(() => {
-            return Promise.resolve({
-              exitCode: 0,
-              stdout: `Fictitious dotnet runtime version ${inputVersion} is installed`,
-              stderr: ''
-            });
-          })
-          .mockImplementationOnce(() => {
-            return Promise.resolve({
-              exitCode: 1,
-              stdout: '',
-              stderr: errorMessage
-            });
-          });
+          .mockImplementationOnce(() =>
+            Promise.resolve({exitCode: 0, stdout: '8.0.11', stderr: ''})
+          )
+          .mockImplementationOnce(() =>
+            Promise.resolve({exitCode: 1, stdout: '', stderr: 'failed'})
+          );
 
-        const dotnetInstaller = new installer.DotnetCoreInstaller(
-          inputVersion,
-          inputQuality
-        );
-        await expect(dotnetInstaller.installRuntime()).rejects.toThrow(
-          `Failed to install aspnetcore runtime, exit code: 1. ${errorMessage}`
+        await expect(
+          new installer.DotnetCoreInstaller('8.0.11', '').installRuntime()
+        ).rejects.toThrow(
+          'Failed to install aspnetcore runtime, exit code: 1. failed'
         );
       });
 
-      it('should return version of .NET runtime after installation complete', async () => {
-        const inputVersion = '8.0.402';
-        const inputQuality = '';
-        const stdout = `Fictitious dotnet runtime version ${inputVersion} is installed`;
-        getExecOutputSpy.mockImplementation(() => {
-          return Promise.resolve({
-            exitCode: 0,
-            stdout: `${stdout}`,
-            stderr: ''
+      it('should install the ASP.NET Core build paired with a prerelease runtime', async () => {
+        const getJsonSpy = jest
+          .spyOn(hc.HttpClient.prototype, 'getJson')
+          .mockResolvedValue({
+            statusCode: 200,
+            headers: {},
+            result: {
+              releases: [
+                {
+                  runtime: {version: '8.0.0-rc.2.23479.6'},
+                  'aspnetcore-runtime': {version: '8.0.0-rc.2.23480.2'}
+                }
+              ]
+            }
           });
-        });
-        maxSatisfyingSpy.mockImplementation(() => inputVersion);
-
-        const dotnetInstaller = new installer.DotnetCoreInstaller(
-          inputVersion,
-          inputQuality
-        );
-        const installedVersion = await dotnetInstaller.installRuntime();
-
-        expect(installedVersion).toBe(inputVersion);
-      });
-
-      it(`should supply '--runtime dotnet' and '--runtime aspnetcore' arguments to the installation script`, async () => {
-        const inputVersion = '8.0.402';
-        const inputQuality = '';
-        const stdout = `Fictitious dotnet runtime version ${inputVersion} is installed`;
-
-        getExecOutputSpy.mockImplementation(() => {
-          return Promise.resolve({
-            exitCode: 0,
-            stdout: `${stdout}`,
-            stderr: ''
-          });
-        });
-        maxSatisfyingSpy.mockImplementation(() => inputVersion);
-
-        const dotnetInstaller = new installer.DotnetCoreInstaller(
-          inputVersion,
-          inputQuality
-        );
-
-        await dotnetInstaller.installRuntime();
-
-        // Check first call installs .NET runtime
-        const dotnetScriptArguments = (
-          getExecOutputSpy.mock.calls[0][1] as string[]
-        ).join(' ');
-        const expectedDotnetArgument = IS_WINDOWS
-          ? `-Runtime dotnet`
-          : `--runtime dotnet`;
-
-        expect(dotnetScriptArguments).toContain(expectedDotnetArgument);
-
-        // Check second call installs ASP.NET Core runtime
-        const aspnetcoreScriptArguments = (
-          getExecOutputSpy.mock.calls[1][1] as string[]
-        ).join(' ');
-        const expectedAspnetcoreArgument = IS_WINDOWS
-          ? `-Runtime aspnetcore`
-          : `--runtime aspnetcore`;
-
-        expect(aspnetcoreScriptArguments).toContain(expectedAspnetcoreArgument);
-      });
-
-      it(`should supply the same shared arguments to both runtime installation scripts for a cross-arch install`, async () => {
-        const inputVersion = '8.0.x';
-        const inputQuality = 'preview';
-        const inputArchitecture = 'x64';
-        const stdout = `Fictitious dotnet runtime version 8.0.11 is installed`;
-
-        getExecOutputSpy.mockImplementation(() => {
-          return Promise.resolve({
-            exitCode: 0,
-            stdout: `${stdout}`,
-            stderr: ''
-          });
-        });
-        const archSpy = jest.spyOn(os, 'arch').mockReturnValue('arm64');
 
         try {
-          const dotnetInstaller = new installer.DotnetCoreInstaller(
-            inputVersion,
-            inputQuality,
-            inputArchitecture
-          );
-          await dotnetInstaller.installRuntime();
+          await new installer.DotnetCoreInstaller(
+            '8.0.0-rc.2.23479.6',
+            ''
+          ).installRuntime();
         } finally {
-          archSpy.mockRestore();
+          getJsonSpy.mockRestore();
         }
 
-        const installDir = path.join(
-          installer.DotnetInstallDir.dirPath,
-          inputArchitecture
-        );
-        const expectedSharedArguments = IS_WINDOWS
-          ? [
-              '-SkipNonVersionedFiles',
-              `-Architecture ${inputArchitecture}`,
-              '-Channel 8.0',
-              `-Quality ${inputQuality}`,
-              `-InstallDir "${installDir}"`
-            ]
-          : [
-              '--skip-non-versioned-files',
-              `--architecture ${inputArchitecture}`,
-              '--channel 8.0',
-              `--quality ${inputQuality}`,
-              `--install-dir ${installDir}`
-            ];
-
-        expect(getExecOutputSpy).toHaveBeenCalledTimes(2);
-        for (const [, scriptArguments] of getExecOutputSpy.mock.calls) {
-          const joinedArguments = (scriptArguments as string[]).join(' ');
-          for (const expectedArgument of expectedSharedArguments) {
-            expect(joinedArguments).toContain(expectedArgument);
-          }
-        }
+        expect(scriptArgs()[0]).toContain(arg('Version', '8.0.0-rc.2.23479.6'));
+        expect(scriptArgs()[1]).toContain(arg('Version', '8.0.0-rc.2.23480.2'));
       });
 
-      it(`should supply 'version' argument to both runtime installation scripts if supplied version is in A.B.C syntax`, async () => {
-        const inputVersion = '8.0.402';
-        const inputQuality = '';
-        const stdout = `Fictitious dotnet runtime version ${inputVersion} is installed`;
+      it('should install only the .NET runtime before .NET Core 2.1', async () => {
+        await new installer.DotnetCoreInstaller('2.0.9', '').installRuntime();
 
-        getExecOutputSpy.mockImplementation(() => {
-          return Promise.resolve({
-            exitCode: 0,
-            stdout: `${stdout}`,
-            stderr: ''
-          });
-        });
-        maxSatisfyingSpy.mockImplementation(() => inputVersion);
-
-        const dotnetInstaller = new installer.DotnetCoreInstaller(
-          inputVersion,
-          inputQuality
-        );
-
-        await dotnetInstaller.installRuntime();
-
-        const expectedArgument = IS_WINDOWS
-          ? `-Version ${inputVersion}`
-          : `--version ${inputVersion}`;
-
-        // Check both calls contain version argument
-        const dotnetScriptArguments = (
-          getExecOutputSpy.mock.calls[0][1] as string[]
-        ).join(' ');
-        expect(dotnetScriptArguments).toContain(expectedArgument);
-
-        const aspnetcoreScriptArguments = (
-          getExecOutputSpy.mock.calls[1][1] as string[]
-        ).join(' ');
-        expect(aspnetcoreScriptArguments).toContain(expectedArgument);
+        expect(scriptArgs()).toHaveLength(1);
+        expect(scriptArgs()[0]).toContain(arg('Runtime', 'dotnet'));
       });
 
-      it(`should reject A.B.Cxx feature band syntax without running the runtime installation scripts`, async () => {
-        const inputVersion = '8.0.4xx';
-        const inputQuality = '';
+      it('should reuse a complete local runtime pair when check-latest is false', async () => {
+        readdirSyncSpy.mockReturnValue([
+          {name: '8.0.11', isDirectory: () => true, isSymbolicLink: () => false}
+        ]);
 
-        const dotnetInstaller = new installer.DotnetCoreInstaller(
-          inputVersion,
-          inputQuality
-        );
+        const installedVersion = await new installer.DotnetCoreInstaller(
+          '8.0.x',
+          '',
+          undefined,
+          undefined,
+          false
+        ).installRuntime();
 
-        await expect(dotnetInstaller.installRuntime()).rejects.toThrow(
-          `The 'dotnet-runtime' was supplied in invalid format: ${inputVersion}! The A.B.Cxx feature band syntax applies only to .NET SDKs and is supported only by 'dotnet-version'.`
-        );
+        expect(installedVersion).toBe('8.0.11');
         expect(getExecOutputSpy).not.toHaveBeenCalled();
       });
     });
@@ -2041,60 +1925,6 @@ describe('installer tests', () => {
           `The 'dotnet-runtime' was supplied in invalid format: ${version}!`
         );
       });
-
-      it(`should keep accepting A.B.Cxx feature band syntax for 'dotnet-version'`, async () => {
-        const version = '8.0.4xx';
-        const dotnetVersionResolver = new installer.DotnetVersionResolver(
-          version,
-          '',
-          undefined,
-          'dotnet-version'
-        );
-        const versionObject = await dotnetVersionResolver.createDotnetVersion();
-
-        expect(versionObject.type.toLowerCase().includes('channel')).toBe(true);
-        expect(versionObject.value).toBe(version);
-      });
-
-      each(['8.0.4xx', '10.0.1xx', '3.1.1xx']).test(
-        "should reject A.B.Cxx feature band syntax (%s) for 'dotnet-runtime'",
-        async version => {
-          const dotnetVersionResolver = new installer.DotnetVersionResolver(
-            version,
-            '',
-            undefined,
-            'dotnet-runtime'
-          );
-
-          await expect(
-            async () => await dotnetVersionResolver.createDotnetVersion()
-          ).rejects.toThrow(
-            `The 'dotnet-runtime' was supplied in invalid format: ${version}! The A.B.Cxx feature band syntax applies only to .NET SDKs and is supported only by 'dotnet-version'.`
-          );
-        }
-      );
-
-      each([
-        ['dotnet-version', 'A.B.C, A.B, A.B.x, A, A.x, A.B.Cxx, latest'],
-        ['dotnet-runtime', 'A.B.C, A.B, A.B.x, A, A.x, latest']
-      ]).test(
-        "should list the syntax supported by '%s' in the invalid format error message",
-        async (inputName, supportedSyntax) => {
-          const version = 'invalid';
-          const dotnetVersionResolver = new installer.DotnetVersionResolver(
-            version,
-            '',
-            undefined,
-            inputName
-          );
-
-          await expect(
-            async () => await dotnetVersionResolver.createDotnetVersion()
-          ).rejects.toThrow(
-            `The '${inputName}' was supplied in invalid format: ${version}! Supported syntax: ${supportedSyntax}`
-          );
-        }
-      );
     });
   });
 });

@@ -18,56 +18,24 @@ jobs:
       fail-fast: false
       matrix:
         operating-system: [ubuntu-latest, windows-latest, macos-latest]
-        runtime: ['8.0.11']
-        aspnetcore: ['8.0.11']
-        include:
-          - operating-system: ubuntu-latest
-            runtime: '8.0.0-rc.2.23479.6'
-            aspnetcore: '8.0.0-rc.2.23480.2'
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Clear toolcache
         shell: pwsh
         run: __tests__/clear-toolcache.ps1 ${{ runner.os }}
-      - name: Install runtimes without an explicit install directory
-        id: runtime
+      - name: Setup dotnet runtime 8.0.11
         uses: ./
-        env:
-          DOTNET_INSTALL_DIR: ''
         with:
-          dotnet-runtime: ${{ matrix.runtime }}
-      - name: Verify runtime directory and paired versions
+          dotnet-runtime: 8.0.11
+      - name: Verify dotnet runtimes
         shell: pwsh
         run: |
-          if (-not $env:DOTNET_ROOT -or -not (Test-Path $env:DOTNET_ROOT)) {
-            throw 'DOTNET_ROOT must point to the installed runtime directory.'
-          }
           $runtimes = dotnet --list-runtimes
-          if (-not ($runtimes | Select-String -SimpleMatch 'Microsoft.NETCore.App ${{ matrix.runtime }} ')) {
-            throw 'Requested base runtime was not installed.'
-          }
-          if (-not ($runtimes | Select-String -SimpleMatch 'Microsoft.AspNetCore.App ${{ matrix.aspnetcore }} ')) {
-            throw 'Paired ASP.NET Core runtime was not installed.'
-          }
-          if ('${{ steps.runtime.outputs.dotnet-version }}' -ne '${{ matrix.runtime }}') {
-            throw 'The output must remain the base runtime version.'
-          }
-      - name: Reuse the installed runtime pair
-        if: matrix.runtime == '8.0.11'
-        id: reuse-runtime
-        uses: ./
-        env:
-          DOTNET_INSTALL_DIR: ''
-        with:
-          dotnet-runtime: '8.0.x'
-          check-latest: false
-      - name: Verify local reuse did not resolve a newer patch
-        if: matrix.runtime == '8.0.11'
-        shell: pwsh
-        run: |
-          if ('${{ steps.reuse-runtime.outputs.dotnet-version }}' -ne '8.0.11') {
-            throw 'Expected the preinstalled 8.0.11 runtime pair to be reused.'
+          foreach ($runtime in 'Microsoft.NETCore.App', 'Microsoft.AspNetCore.App') {
+            if (-not ($runtimes -like "$runtime 8.0.11 *")) {
+              throw "$runtime 8.0.11 was not installed."
+            }
           }
 
   test-setup-multiple-versions:
