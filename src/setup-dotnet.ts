@@ -158,7 +158,8 @@ export async function run() {
         const installedVersion = await dotnetInstaller.installDotnet();
         installedDotnetVersions.push(installedVersion);
       }
-      addDotnetToPath(architecture);
+      setDotnetInstallDir(architecture);
+      DotnetInstallDir.addToPath();
 
       const workloadsInput = core.getInput('workloads');
       if (workloadsInput) {
@@ -188,19 +189,23 @@ export async function run() {
       const uniqueRuntimeVersions = new Set<string>(
         runtimeVersions.map(v => (v.toLowerCase() === 'latest' ? 'latest' : v))
       );
+      // Runtimes have no SDK feature bands, so A.B.Cxx uses its A.B channel.
+      const runtimeChannel = dotnetChannel.replace(/^(\d+\.\d+)\.\dxx$/, '$1');
       for (const runtimeVersion of uniqueRuntimeVersions) {
         const dotnetInstaller = new DotnetCoreInstaller(
           runtimeVersion,
           quality,
           architecture,
-          runtimeVersion === 'latest' ? dotnetChannel : undefined,
+          runtimeVersion === 'latest' ? runtimeChannel : undefined,
           checkLatest
         );
         installedRuntimeVersions.push(await dotnetInstaller.installRuntime());
       }
+      // installRuntime() resets DOTNET_INSTALL_DIR to the base directory.
+      setDotnetInstallDir(architecture);
       // The SDK installation has already added the same directory to PATH.
       if (!versions.length) {
-        addDotnetToPath(architecture);
+        DotnetInstallDir.addToPath();
       }
     }
 
@@ -234,7 +239,7 @@ export async function run() {
   }
 }
 
-function addDotnetToPath(architecture: SupportedArchitecture | ''): void {
+function setDotnetInstallDir(architecture: SupportedArchitecture | ''): void {
   if (
     architecture &&
     normalizeArch(architecture) !== normalizeArch(os.arch())
@@ -244,7 +249,6 @@ function addDotnetToPath(architecture: SupportedArchitecture | ''): void {
       architecture
     );
   }
-  DotnetInstallDir.addToPath();
 }
 
 function getArchitectureInput(): SupportedArchitecture | '' {

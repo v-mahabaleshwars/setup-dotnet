@@ -100,13 +100,7 @@ export class DotnetVersionResolver {
 
   private async resolveVersionInput(): Promise<void> {
     if (this.inputVersion.toLowerCase() === 'latest') {
-      let channel = this.dotnetChannel || '';
-      if (this.isRuntimeInput() && /^\d+\.\d+\.\dxx$/.test(channel)) {
-        core.warning(
-          `The 'dotnet-channel' value '${channel}' is an SDK feature band and will be ignored for 'dotnet-runtime: latest'. Use an A.B, LTS or STS channel for runtimes.`
-        );
-        channel = '';
-      }
+      const channel = this.dotnetChannel || '';
       if (this.isVersionChannel(channel)) {
         // A.B or A.B.Cxx channels are passed directly to the install script
         this.resolvedArgument.value = channel;
@@ -836,7 +830,6 @@ export class DotnetCoreInstaller {
     if (
       (semver.valid(this.version) && semver.prerelease(this.version)) ||
       DotnetCoreInstaller.FeatureBandSyntax.test(this.version) ||
-      DotnetCoreInstaller.FeatureBandSyntax.test(this.dotnetChannel || '') ||
       !this.hasDotnetMuxer()
     ) {
       return null;

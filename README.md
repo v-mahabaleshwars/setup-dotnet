@@ -100,7 +100,7 @@ The optional `dotnet-channel` input specifies the source channel for the install
 | `A.B` (e.g. `8.0`) | A specific release channel |
 | `A.B.Cxx` (e.g. `8.0.1xx`) | A specific SDK release (available since 5.0) |
 
-> **Note**: The `dotnet-channel` input applies to `latest` entries in `dotnet-version` or `dotnet-runtime`; otherwise it is ignored with a warning. SDK-only `A.B.Cxx` channels are ignored for runtimes with a warning, without affecting SDK installation.
+> **Note**: The `dotnet-channel` input applies to `latest` entries in `dotnet-version` or `dotnet-runtime`; otherwise it is ignored with a warning. For `dotnet-runtime`, an `A.B.Cxx` channel uses its `A.B` channel (e.g. `8.0.1xx` installs the latest `8.0` runtime), without affecting SDK installation.
 
 **Install latest LTS version:**
 ```yaml

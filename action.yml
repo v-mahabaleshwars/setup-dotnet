@@ -15,7 +15,7 @@ inputs:
     description: 'Optional quality of the build. The possible values are: daily, preview, ga.'
     required: false
   dotnet-channel:
-    description: 'Optional channel for the installation. The possible values are: STS, LTS, A.B (e.g. 8.0), A.B.Cxx (e.g. 8.0.1xx, SDK only, available since 5.0). To be used with "dotnet-version: latest" or "dotnet-runtime: latest".'
+    description: 'Optional channel for the installation. The possible values are: STS, LTS, A.B (e.g. 8.0), A.B.Cxx (e.g. 8.0.1xx, available since 5.0; dotnet-runtime uses its A.B channel). To be used with "dotnet-version: latest" or "dotnet-runtime: latest".'
     required: false
   skip-lts-prepass:
     description: 'Optional. When true, skips the LTS runtime pre-pass and installs only the requested dotnet-version. Default: false.'

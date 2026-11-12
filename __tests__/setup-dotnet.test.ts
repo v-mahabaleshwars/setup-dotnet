@@ -9,6 +9,7 @@ import {
 } from '@jest/globals';
 import semver from 'semver';
 import os from 'os';
+import path from 'path';
 
 jest.unstable_mockModule('@actions/core', () => ({
   getInput: jest.fn(),
@@ -225,6 +226,8 @@ describe('setup-dotnet tests', () => {
         inputs['dotnet-channel'] = '';
         inputs['dotnet-quality'] = '';
         inputs['check-latest'] = '';
+        inputs['architecture'] = '';
+        delete process.env['DOTNET_INSTALL_DIR'];
       });
 
       it('should install unique runtime versions, add PATH and output the highest version without an SDK', async () => {
@@ -247,9 +250,9 @@ describe('setup-dotnet tests', () => {
         expect(setOutputSpy).toHaveBeenCalledWith('dotnet-version', '9.0.1');
       });
 
-      it('should forward dotnet-channel, dotnet-quality and check-latest to runtime latest', async () => {
+      it('should forward dotnet-channel (feature band as A.B), dotnet-quality and check-latest to runtime latest', async () => {
         inputs['dotnet-runtime'] = ['latest'];
-        inputs['dotnet-channel'] = '8.0';
+        inputs['dotnet-channel'] = '8.0.1xx';
         inputs['dotnet-quality'] = 'preview';
         inputs['check-latest'] = 'false';
         let capturedOptions: object | undefined;
@@ -284,6 +287,25 @@ describe('setup-dotnet tests', () => {
           `Value 'invalid' is not supported for the 'dotnet-channel' option. Supported values are: LTS, STS, A.B (e.g. 8.0), A.B.Cxx (e.g. 8.0.1xx).`
         );
         expect(installRuntimeSpy).not.toHaveBeenCalled();
+      });
+
+      it('should keep the cross-architecture DOTNET_INSTALL_DIR after installing an SDK and a runtime', async () => {
+        const architecture = os.arch() === 'arm64' ? 'x64' : 'arm64';
+        inputs['dotnet-version'] = ['8.0.x'];
+        inputs['dotnet-runtime'] = ['9.0.x'];
+        inputs['architecture'] = architecture;
+        installDotnetSpy.mockResolvedValue('8.0.404');
+        installRuntimeSpy.mockImplementation(() => {
+          DotnetInstallDir.setEnvironmentVariable();
+          return Promise.resolve('9.0.1');
+        });
+
+        await setup.run();
+        expect(setFailedSpy).not.toHaveBeenCalled();
+        expect(process.env['DOTNET_INSTALL_DIR']).toBe(
+          path.join(DotnetInstallDir.dirPath, architecture)
+        );
+        expect(DotnetInstallDir.addToPath).toHaveBeenCalledTimes(1);
       });
     });
 

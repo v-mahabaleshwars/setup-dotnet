@@ -44004,11 +44004,7 @@ class DotnetVersionResolver {
     }
     async resolveVersionInput() {
         if (this.inputVersion.toLowerCase() === 'latest') {
-            let channel = this.dotnetChannel || '';
-            if (this.isRuntimeInput() && /^\d+\.\d+\.\dxx$/.test(channel)) {
-                warning(`The 'dotnet-channel' value '${channel}' is an SDK feature band and will be ignored for 'dotnet-runtime: latest'. Use an A.B, LTS or STS channel for runtimes.`);
-                channel = '';
-            }
+            const channel = this.dotnetChannel || '';
             if (this.isVersionChannel(channel)) {
                 // A.B or A.B.Cxx channels are passed directly to the install script
                 this.resolvedArgument.value = channel;
@@ -44564,7 +44560,6 @@ class DotnetCoreInstaller {
         // Their pairing must be resolved from release metadata, not guessed locally.
         if ((semver_default().valid(this.version) && semver_default().prerelease(this.version)) ||
             DotnetCoreInstaller.FeatureBandSyntax.test(this.version) ||
-            DotnetCoreInstaller.FeatureBandSyntax.test(this.dotnetChannel || '') ||
             !this.hasDotnetMuxer()) {
             return null;
         }
@@ -105784,7 +105779,8 @@ async function run() {
                 const installedVersion = await dotnetInstaller.installDotnet();
                 installedDotnetVersions.push(installedVersion);
             }
-            addDotnetToPath(architecture);
+            setDotnetInstallDir(architecture);
+            DotnetInstallDir.addToPath();
             const workloadsInput = getInput('workloads');
             if (workloadsInput) {
                 const workloads = workloadsInput
@@ -105806,13 +105802,17 @@ async function run() {
         }
         if (runtimeVersions.length) {
             const uniqueRuntimeVersions = new Set(runtimeVersions.map(v => (v.toLowerCase() === 'latest' ? 'latest' : v)));
+            // Runtimes have no SDK feature bands, so A.B.Cxx uses its A.B channel.
+            const runtimeChannel = dotnetChannel.replace(/^(\d+\.\d+)\.\dxx$/, '$1');
             for (const runtimeVersion of uniqueRuntimeVersions) {
-                const dotnetInstaller = new DotnetCoreInstaller(runtimeVersion, quality, architecture, runtimeVersion === 'latest' ? dotnetChannel : undefined, checkLatest);
+                const dotnetInstaller = new DotnetCoreInstaller(runtimeVersion, quality, architecture, runtimeVersion === 'latest' ? runtimeChannel : undefined, checkLatest);
                 installedRuntimeVersions.push(await dotnetInstaller.installRuntime());
             }
+            // installRuntime() resets DOTNET_INSTALL_DIR to the base directory.
+            setDotnetInstallDir(architecture);
             // The SDK installation has already added the same directory to PATH.
             if (!versions.length) {
-                addDotnetToPath(architecture);
+                DotnetInstallDir.addToPath();
             }
         }
         const sourceUrl = getInput('source-url');
@@ -105834,12 +105834,11 @@ async function run() {
         setFailed(error.message);
     }
 }
-function addDotnetToPath(architecture) {
+function setDotnetInstallDir(architecture) {
     if (architecture &&
         normalizeArch(architecture) !== normalizeArch(external_os_default().arch())) {
         process.env['DOTNET_INSTALL_DIR'] = external_path_default().join(DotnetInstallDir.dirPath, architecture);
     }
-    DotnetInstallDir.addToPath();
 }
 function getArchitectureInput() {
     const raw = (getInput('architecture') || '').trim();
