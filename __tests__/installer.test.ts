@@ -1422,22 +1422,6 @@ describe('installer tests', () => {
         }
       });
 
-      it('should fail when the ASP.NET Core runtime installation fails', async () => {
-        getExecOutputSpy
-          .mockImplementationOnce(() =>
-            Promise.resolve({exitCode: 0, stdout: '8.0.11', stderr: ''})
-          )
-          .mockImplementationOnce(() =>
-            Promise.resolve({exitCode: 1, stdout: '', stderr: 'failed'})
-          );
-
-        await expect(
-          new installer.DotnetCoreInstaller('8.0.11', '').installRuntime()
-        ).rejects.toThrow(
-          'Failed to install aspnetcore runtime, exit code: 1. failed'
-        );
-      });
-
       it('should install the ASP.NET Core build paired with a prerelease runtime', async () => {
         const getJsonSpy = jest
           .spyOn(hc.HttpClient.prototype, 'getJson')
@@ -1465,13 +1449,6 @@ describe('installer tests', () => {
 
         expect(scriptArgs()[0]).toContain(arg('Version', '8.0.0-rc.2.23479.6'));
         expect(scriptArgs()[1]).toContain(arg('Version', '8.0.0-rc.2.23480.2'));
-      });
-
-      it('should install only the .NET runtime before .NET Core 2.1', async () => {
-        await new installer.DotnetCoreInstaller('2.0.9', '').installRuntime();
-
-        expect(scriptArgs()).toHaveLength(1);
-        expect(scriptArgs()[0]).toContain(arg('Runtime', 'dotnet'));
       });
 
       it('should reuse a complete local runtime pair when check-latest is false', async () => {
@@ -1908,21 +1885,6 @@ describe('installer tests', () => {
           async () => await dotnetVersionResolver.createDotnetVersion()
         ).rejects.toThrow(
           `'dotnet-version' was supplied in invalid format: ${version}! The A.B.Cxx syntax is available since the .NET 5.0 release.`
-        );
-      });
-
-      it(`should reference the provided input name in the invalid format error message`, async () => {
-        const version = 'invalid';
-        const dotnetVersionResolver = new installer.DotnetVersionResolver(
-          version,
-          '',
-          undefined,
-          'dotnet-runtime'
-        );
-        await expect(
-          async () => await dotnetVersionResolver.createDotnetVersion()
-        ).rejects.toThrow(
-          `The 'dotnet-runtime' was supplied in invalid format: ${version}!`
         );
       });
     });

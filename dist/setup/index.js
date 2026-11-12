@@ -44705,7 +44705,7 @@ class DotnetCoreInstaller {
             warning(`No ASP.NET Core release mapping was found for '${version}' (HTTP ${response.statusCode}). Trying the same exact version for this potentially unpublished build; installation failures remain fatal.`);
         }
         catch (error) {
-            warning(`Unable to resolve the ASP.NET Core release paired with '${version}': ${error.message}. Trying the same exact version; installation failures remain fatal.`);
+            warning(`Unable to resolve the ASP.NET Core release paired with '${version}': ${error instanceof Error ? error.message : String(error)}. Trying the same exact version; installation failures remain fatal.`);
         }
         finally {
             httpClient.dispose();
@@ -105735,20 +105735,17 @@ async function run() {
         const architecture = getArchitectureInput();
         const checkLatest = getCheckLatestInput();
         let dotnetChannel = getInput('dotnet-channel');
-        const isRuntimeLatestRequested = runtimeVersions.some(version => version && version.toLowerCase() === 'latest');
-        const isLatestRequested = versions.some(version => version && version.toLowerCase() === 'latest');
+        const isLatestRequested = [...versions, ...runtimeVersions].some(version => version && version.toLowerCase() === 'latest');
         if (dotnetChannel && !isValidChannel(dotnetChannel)) {
             if (isLatestRequested) {
                 throw new Error(`Value '${dotnetChannel}' is not supported for the 'dotnet-channel' option. Supported values are: LTS, STS, A.B (e.g. 8.0), A.B.Cxx (e.g. 8.0.1xx).`);
             }
             else {
-                warning(`Value '${dotnetChannel}' is not supported for the 'dotnet-channel' option and will be ignored. Supported values are: LTS, STS, A.B (e.g. 8.0), A.B.Cxx (e.g. 8.0.1xx, SDK only).`);
+                warning(`Value '${dotnetChannel}' is not supported for the 'dotnet-channel' option and will be ignored because 'dotnet-version' is not set to 'latest'. Supported values are: LTS, STS, A.B (e.g. 8.0), A.B.Cxx (e.g. 8.0.1xx).`);
                 dotnetChannel = '';
             }
         }
-        else if (dotnetChannel &&
-            !isLatestRequested &&
-            !isRuntimeLatestRequested) {
+        else if (dotnetChannel && !isLatestRequested) {
             warning(`The 'dotnet-channel' input is only supported when 'dotnet-version' or 'dotnet-runtime' is set to 'latest'.`);
             dotnetChannel = '';
         }
@@ -105808,20 +105805,14 @@ async function run() {
             }
         }
         if (runtimeVersions.length) {
-            let dotnetInstaller;
             const uniqueRuntimeVersions = new Set(runtimeVersions.map(v => (v.toLowerCase() === 'latest' ? 'latest' : v)));
             for (const runtimeVersion of uniqueRuntimeVersions) {
-                dotnetInstaller = new DotnetCoreInstaller(runtimeVersion, quality, architecture, runtimeVersion.toLowerCase() === 'latest' ? dotnetChannel : undefined, checkLatest);
-                const installedRuntimeVersion = await dotnetInstaller.installRuntime();
-                installedRuntimeVersions.push(installedRuntimeVersion);
+                const dotnetInstaller = new DotnetCoreInstaller(runtimeVersion, quality, architecture, runtimeVersion === 'latest' ? dotnetChannel : undefined, checkLatest);
+                installedRuntimeVersions.push(await dotnetInstaller.installRuntime());
             }
-            // Ensure PATH is set (may have been set already by SDK installation)
+            // The SDK installation has already added the same directory to PATH.
             if (!versions.length) {
                 addDotnetToPath(architecture);
-            }
-            else if (architecture &&
-                normalizeArch(architecture) !== normalizeArch(external_os_default().arch())) {
-                process.env['DOTNET_INSTALL_DIR'] = external_path_default().join(DotnetInstallDir.dirPath, architecture);
             }
         }
         const sourceUrl = getInput('source-url');

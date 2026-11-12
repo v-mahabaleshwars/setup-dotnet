@@ -1050,7 +1050,7 @@ export class DotnetCoreInstaller {
       );
     } catch (error) {
       core.warning(
-        `Unable to resolve the ASP.NET Core release paired with '${version}': ${error.message}. Trying the same exact version; installation failures remain fatal.`
+        `Unable to resolve the ASP.NET Core release paired with '${version}': ${error instanceof Error ? error.message : String(error)}. Trying the same exact version; installation failures remain fatal.`
       );
     } finally {
       httpClient.dispose();

@@ -79,10 +79,7 @@ export async function run() {
     const checkLatest = getCheckLatestInput();
     let dotnetChannel = core.getInput('dotnet-channel');
 
-    const isRuntimeLatestRequested = runtimeVersions.some(
-      version => version && version.toLowerCase() === 'latest'
-    );
-    const isLatestRequested = versions.some(
+    const isLatestRequested = [...versions, ...runtimeVersions].some(
       version => version && version.toLowerCase() === 'latest'
     );
     if (dotnetChannel && !isValidChannel(dotnetChannel)) {
@@ -92,15 +89,11 @@ export async function run() {
         );
       } else {
         core.warning(
-          `Value '${dotnetChannel}' is not supported for the 'dotnet-channel' option and will be ignored. Supported values are: LTS, STS, A.B (e.g. 8.0), A.B.Cxx (e.g. 8.0.1xx, SDK only).`
+          `Value '${dotnetChannel}' is not supported for the 'dotnet-channel' option and will be ignored because 'dotnet-version' is not set to 'latest'. Supported values are: LTS, STS, A.B (e.g. 8.0), A.B.Cxx (e.g. 8.0.1xx).`
         );
         dotnetChannel = '';
       }
-    } else if (
-      dotnetChannel &&
-      !isLatestRequested &&
-      !isRuntimeLatestRequested
-    ) {
+    } else if (dotnetChannel && !isLatestRequested) {
       core.warning(
         `The 'dotnet-channel' input is only supported when 'dotnet-version' or 'dotnet-runtime' is set to 'latest'.`
       );
@@ -192,32 +185,22 @@ export async function run() {
     }
 
     if (runtimeVersions.length) {
-      let dotnetInstaller: DotnetCoreInstaller;
       const uniqueRuntimeVersions = new Set<string>(
         runtimeVersions.map(v => (v.toLowerCase() === 'latest' ? 'latest' : v))
       );
       for (const runtimeVersion of uniqueRuntimeVersions) {
-        dotnetInstaller = new DotnetCoreInstaller(
+        const dotnetInstaller = new DotnetCoreInstaller(
           runtimeVersion,
           quality,
           architecture,
-          runtimeVersion.toLowerCase() === 'latest' ? dotnetChannel : undefined,
+          runtimeVersion === 'latest' ? dotnetChannel : undefined,
           checkLatest
         );
-        const installedRuntimeVersion = await dotnetInstaller.installRuntime();
-        installedRuntimeVersions.push(installedRuntimeVersion);
+        installedRuntimeVersions.push(await dotnetInstaller.installRuntime());
       }
-      // Ensure PATH is set (may have been set already by SDK installation)
+      // The SDK installation has already added the same directory to PATH.
       if (!versions.length) {
         addDotnetToPath(architecture);
-      } else if (
-        architecture &&
-        normalizeArch(architecture) !== normalizeArch(os.arch())
-      ) {
-        process.env['DOTNET_INSTALL_DIR'] = path.join(
-          DotnetInstallDir.dirPath,
-          architecture
-        );
       }
     }
 
