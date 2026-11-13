@@ -44556,16 +44556,35 @@ class DotnetCoreInstaller {
         }
     }
     findLocalRuntimeVersion() {
-        // Exact prereleases can have different shared-framework build numbers.
-        // Their pairing must be resolved from release metadata, not guessed locally.
-        if ((semver_default().valid(this.version) && semver_default().prerelease(this.version)) ||
-            DotnetCoreInstaller.FeatureBandSyntax.test(this.version) ||
+        if (DotnetCoreInstaller.FeatureBandSyntax.test(this.version) ||
             !this.hasDotnetMuxer()) {
             return null;
         }
         const dotnetVersions = this.getInstalledRuntimeVersions('Microsoft.NETCore.App');
-        const aspnetVersions = new Set(this.getInstalledRuntimeVersions('Microsoft.AspNetCore.App'));
-        return this.findMatchingVersion(dotnetVersions.filter(version => !hasAspNetCoreRuntime(version) || aspnetVersions.has(version)));
+        const aspnetVersions = this.getInstalledRuntimeVersions('Microsoft.AspNetCore.App');
+        // Preview pairs can have different build numbers, so a preview ASP.NET Core
+        // runtime is paired with the .NET runtime declared in its runtimeconfig.json.
+        const pairedVersions = new Set([
+            ...aspnetVersions,
+            ...aspnetVersions
+                .filter(version => semver_default().prerelease(version))
+                .flatMap(version => this.getDeclaredRuntimeVersion(version) ?? [])
+        ]);
+        return this.findMatchingVersion(dotnetVersions.filter(version => !hasAspNetCoreRuntime(version) || pairedVersions.has(version)));
+    }
+    getDeclaredRuntimeVersion(aspnetVersion) {
+        const configPath = external_path_default().join(DotnetInstallDir.dirPath, 'shared', 'Microsoft.AspNetCore.App', aspnetVersion, 'Microsoft.AspNetCore.App.runtimeconfig.json');
+        try {
+            const framework = JSON.parse((0,external_fs_namespaceObject.readFileSync)(configPath, 'utf8'))
+                .runtimeOptions?.framework;
+            return framework?.name === 'Microsoft.NETCore.App'
+                ? framework.version
+                : undefined;
+        }
+        catch {
+            core_debug(`Unable to read the runtime pairing from '${configPath}'.`);
+            return undefined;
+        }
     }
     async installDotnet() {
         // Before findLocalSdkVersion(), which looks under the resolved directory.
