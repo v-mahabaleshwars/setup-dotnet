@@ -10,6 +10,7 @@ import {
   lstatSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   rmSync,
   statSync
 } from 'fs';
@@ -36,8 +37,24 @@ interface ReleaseIndexResponse {
   'releases-index': ReleaseIndexEntry[];
 }
 
+interface RuntimeReleasesResponse {
+  releases?: {
+    runtime?: {version?: string} | null;
+    'aspnetcore-runtime'?: {version?: string} | null;
+  }[];
+}
+
 const QUALITY_INPUT_MINIMAL_MAJOR_TAG = 6;
 const LATEST_PATCH_SYNTAX_MINIMAL_MAJOR_TAG = 5;
+
+function hasAspNetCoreRuntime(version: string): boolean {
+  const match = version.match(/^(\d+)\.(\d+)/);
+  return (
+    !match ||
+    Number(match[1]) > 2 ||
+    (Number(match[1]) === 2 && Number(match[2]) >= 1)
+  );
+}
 
 function channelForMajor(major: string): string {
   // Starting with .NET 5, the minor version is always zero.
@@ -61,7 +78,8 @@ export class DotnetVersionResolver {
   constructor(
     version: string,
     private quality: QualityOptions = '',
-    private dotnetChannel?: string
+    private dotnetChannel?: string,
+    private inputName: string = 'dotnet-version'
   ) {
     this.inputVersion = version.trim();
     this.resolvedArgument = {type: '', value: '', qualityFlag: false};
@@ -109,7 +127,7 @@ export class DotnetVersionResolver {
 
     if (!semver.validRange(this.inputVersion) && !this.isLatestPatchSyntax()) {
       throw new Error(
-        `The 'dotnet-version' was supplied in invalid format: ${this.inputVersion}! Supported syntax: A.B.C, A.B, A.B.x, A, A.x, A.B.Cxx, latest`
+        `The '${this.inputName}' was supplied in invalid format: ${this.inputVersion}! Supported syntax: ${this.getSupportedSyntax()}`
       );
     }
     if (semver.valid(this.inputVersion)) {
@@ -123,16 +141,32 @@ export class DotnetVersionResolver {
     return /^\d+$/.test(versionTag);
   }
 
+  private isRuntimeInput(): boolean {
+    return this.inputName === 'dotnet-runtime';
+  }
+
+  private getSupportedSyntax(): string {
+    return this.isRuntimeInput()
+      ? 'A.B.C, A.B, A.B.x, A, A.x, latest'
+      : 'A.B.C, A.B, A.B.x, A, A.x, A.B.Cxx, latest';
+  }
+
   private isLatestPatchSyntax() {
     const majorTag = this.inputVersion.match(
       /^(?<majorTag>\d+)\.\d+\.\d{1}x{2}$/
     )?.groups?.majorTag;
+    // Feature bands (A.B.Cxx) exist only for SDKs, so the install script can't resolve them for runtimes.
+    if (majorTag && this.isRuntimeInput()) {
+      throw new Error(
+        `The '${this.inputName}' was supplied in invalid format: ${this.inputVersion}! The A.B.Cxx feature band syntax applies only to .NET SDKs and is supported only by 'dotnet-version'. Supported syntax: ${this.getSupportedSyntax()}`
+      );
+    }
     if (
       majorTag &&
       parseInt(majorTag) < LATEST_PATCH_SYNTAX_MINIMAL_MAJOR_TAG
     ) {
       throw new Error(
-        `The 'dotnet-version' was supplied in invalid format: ${this.inputVersion}! The A.B.Cxx syntax is available since the .NET 5.0 release.`
+        `The '${this.inputName}' was supplied in invalid format: ${this.inputVersion}! The A.B.Cxx syntax is available since the .NET 5.0 release.`
       );
     }
     return majorTag ? true : false;
@@ -700,6 +734,10 @@ export class DotnetCoreInstaller {
       );
     }
 
+    return this.findMatchingVersion(allowed);
+  }
+
+  private findMatchingVersion(allowed: string[]): string | null {
     if (semver.valid(this.version)) {
       return allowed.find(version => version === this.version) ?? null;
     }
@@ -769,6 +807,70 @@ export class DotnetCoreInstaller {
     }
 
     return null;
+  }
+
+  private getInstalledRuntimeVersions(framework: string): string[] {
+    const runtimeDir = path.join(DotnetInstallDir.dirPath, 'shared', framework);
+    try {
+      return readdirSync(runtimeDir, {withFileTypes: true})
+        .filter(entry => entry.isDirectory() || entry.isSymbolicLink())
+        .map(entry => entry.name)
+        .filter(version => semver.valid(version) !== null)
+        .filter(version =>
+          isFile(path.join(runtimeDir, version, `${framework}.deps.json`))
+        );
+    } catch {
+      core.debug(`Unable to read the runtime directory '${runtimeDir}'.`);
+      return [];
+    }
+  }
+
+  private findLocalRuntimeVersion(): string | null {
+    if (
+      DotnetCoreInstaller.FeatureBandSyntax.test(this.version) ||
+      !this.hasDotnetMuxer()
+    ) {
+      return null;
+    }
+    const dotnetVersions = this.getInstalledRuntimeVersions(
+      'Microsoft.NETCore.App'
+    );
+    const aspnetVersions = this.getInstalledRuntimeVersions(
+      'Microsoft.AspNetCore.App'
+    );
+    // Preview pairs can have different build numbers, so a preview ASP.NET Core
+    // runtime is paired with the .NET runtime declared in its runtimeconfig.json.
+    const pairedVersions = new Set([
+      ...aspnetVersions,
+      ...aspnetVersions
+        .filter(version => semver.prerelease(version))
+        .flatMap(version => this.getDeclaredRuntimeVersion(version) ?? [])
+    ]);
+    return this.findMatchingVersion(
+      dotnetVersions.filter(
+        version => !hasAspNetCoreRuntime(version) || pairedVersions.has(version)
+      )
+    );
+  }
+
+  private getDeclaredRuntimeVersion(aspnetVersion: string): string | undefined {
+    const configPath = path.join(
+      DotnetInstallDir.dirPath,
+      'shared',
+      'Microsoft.AspNetCore.App',
+      aspnetVersion,
+      'Microsoft.AspNetCore.App.runtimeconfig.json'
+    );
+    try {
+      const framework = JSON.parse(readFileSync(configPath, 'utf8'))
+        .runtimeOptions?.framework;
+      return framework?.name === 'Microsoft.NETCore.App'
+        ? framework.version
+        : undefined;
+    } catch {
+      core.debug(`Unable to read the runtime pairing from '${configPath}'.`);
+      return undefined;
+    }
   }
 
   public async installDotnet(): Promise<string | null> {
@@ -861,6 +963,144 @@ export class DotnetCoreInstaller {
     }
 
     return this.parseInstalledVersion(dotnetInstallOutput.stdout);
+  }
+
+  public async installRuntime(): Promise<string | null> {
+    DotnetInstallDir.setEnvironmentVariable();
+    const isCrossArch =
+      !!this.architecture &&
+      normalizeArch(this.architecture) !== normalizeArch(os.arch());
+
+    if (!this.checkLatest && !isCrossArch) {
+      const localVersion = this.findLocalRuntimeVersion();
+      if (localVersion) {
+        core.info(
+          `'check-latest' is false and locally installed .NET runtimes (${localVersion}) satisfy the '${this.version}' request. Skipping download.`
+        );
+        return localVersion;
+      }
+      core.info(
+        `'check-latest' is false but no complete local runtime installation satisfies the '${this.version}' request. Falling back to online installation.`
+      );
+    }
+
+    const versionResolver = new DotnetVersionResolver(
+      this.version,
+      this.quality,
+      this.dotnetChannel,
+      'dotnet-runtime'
+    );
+    const dotnetVersion = await versionResolver.createDotnetVersion();
+    if (this.quality && !dotnetVersion.qualityFlag) {
+      core.warning(
+        `The 'dotnet-quality' input can be used only with .NET runtime channels in A.B, A.B.x, A or A.x formats where the major tag is higher than 5, or 'latest' resolving to such a channel. You specified: ${dotnetVersion.value}. 'dotnet-quality' input is ignored for this runtime.`
+      );
+    }
+
+    const installAspNetCore = hasAspNetCoreRuntime(dotnetVersion.value);
+    const aspnetVersion = installAspNetCore
+      ? await this.resolveAspNetCoreVersion(dotnetVersion)
+      : undefined;
+    if (!installAspNetCore) {
+      core.warning(
+        `ASP.NET Core shared runtimes are not available before .NET Core 2.1. Installing only the .NET runtime for '${this.version}'.`
+      );
+    }
+
+    const architectureArguments = isCrossArch
+      ? [
+          IS_WINDOWS ? '-InstallDir' : '--install-dir',
+          IS_WINDOWS
+            ? `"${path.join(DotnetInstallDir.dirPath, this.architecture!)}"`
+            : path.join(DotnetInstallDir.dirPath, this.architecture!)
+        ]
+      : [];
+
+    // Install the .NET runtime (Microsoft.NETCore.App) first, then the
+    // ASP.NET Core runtime (Microsoft.AspNetCore.App)
+    const dotnetRuntimeStdout = await this.installSharedRuntime(
+      'dotnet',
+      dotnetVersion,
+      architectureArguments
+    );
+    if (aspnetVersion) {
+      await this.installSharedRuntime(
+        'aspnetcore',
+        aspnetVersion,
+        architectureArguments
+      );
+    }
+
+    // The output remains the base runtime version, even when build numbers differ.
+    return this.parseInstalledVersion(dotnetRuntimeStdout);
+  }
+
+  private async resolveAspNetCoreVersion(
+    dotnetVersion: DotnetVersion
+  ): Promise<DotnetVersion> {
+    const version = dotnetVersion.value;
+    if (!semver.valid(version) || !semver.prerelease(version)) {
+      return dotnetVersion;
+    }
+
+    const channel = `${semver.major(version)}.${semver.minor(version)}`;
+    const httpClient = new hc.HttpClient('actions/setup-dotnet', [], {
+      allowRetries: true,
+      maxRetries: 3
+    });
+    try {
+      const response = await httpClient.getJson<RuntimeReleasesResponse>(
+        `https://builds.dotnet.microsoft.com/dotnet/release-metadata/${channel}/releases.json`
+      );
+      const releases = response.result?.releases;
+      const release = Array.isArray(releases)
+        ? releases.find(entry => entry?.runtime?.version === version)
+        : undefined;
+      const aspnetVersion = release?.['aspnetcore-runtime']?.version;
+      if (
+        response.statusCode === 200 &&
+        typeof aspnetVersion === 'string' &&
+        semver.valid(aspnetVersion)
+      ) {
+        return {...dotnetVersion, value: aspnetVersion};
+      }
+      core.warning(
+        `No ASP.NET Core release mapping was found for '${version}' (HTTP ${response.statusCode}). Trying the same exact version for this potentially unpublished build; installation failures remain fatal.`
+      );
+    } catch (error) {
+      core.warning(
+        `Unable to resolve the ASP.NET Core release paired with '${version}': ${error instanceof Error ? error.message : String(error)}. Trying the same exact version; installation failures remain fatal.`
+      );
+    } finally {
+      httpClient.dispose();
+    }
+    return dotnetVersion;
+  }
+
+  private async installSharedRuntime(
+    runtime: 'dotnet' | 'aspnetcore',
+    dotnetVersion: DotnetVersion,
+    architectureArguments: string[]
+  ): Promise<string> {
+    const runtimeInstallOutput = await new DotnetInstallScript()
+      .useArchitecture(this.architecture)
+      // If dotnet CLI is already installed - avoid overwriting it
+      .useArguments(
+        IS_WINDOWS ? '-SkipNonVersionedFiles' : '--skip-non-versioned-files'
+      )
+      .useArguments(IS_WINDOWS ? '-Runtime' : '--runtime', runtime)
+      // Use version provided by user
+      .useVersion(dotnetVersion, dotnetVersion.qualityFlag ? this.quality : '')
+      .useArguments(...architectureArguments)
+      .execute();
+
+    if (runtimeInstallOutput.exitCode) {
+      throw new Error(
+        `Failed to install ${runtime} runtime, exit code: ${runtimeInstallOutput.exitCode}. ${runtimeInstallOutput.stderr}`
+      );
+    }
+
+    return runtimeInstallOutput.stdout;
   }
 
   private parseInstalledVersion(stdout: string): string | null {
