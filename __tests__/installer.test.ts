@@ -1467,6 +1467,24 @@ describe('installer tests', () => {
         expect(installedVersion).toBe('8.0.11');
         expect(getExecOutputSpy).not.toHaveBeenCalled();
       });
+
+      it.each([
+        [
+          '8.0.1xx',
+          ` The A.B.Cxx feature band syntax applies only to .NET SDKs and is supported only by 'dotnet-version'.`
+        ],
+        ['abc', '']
+      ])(
+        "should reject '%s' with an error naming 'dotnet-runtime' before installing",
+        async (version, reason) => {
+          await expect(
+            new installer.DotnetCoreInstaller(version, '').installRuntime()
+          ).rejects.toThrow(
+            `The 'dotnet-runtime' was supplied in invalid format: ${version}!${reason} Supported syntax: A.B.C, A.B, A.B.x, A, A.x, latest`
+          );
+          expect(getExecOutputSpy).not.toHaveBeenCalled();
+        }
+      );
     });
 
     describe('addToPath() tests', () => {

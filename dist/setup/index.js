@@ -43980,13 +43980,11 @@ function channelForMajor(major) {
 class DotnetVersionResolver {
     quality;
     dotnetChannel;
-    inputName;
     inputVersion;
     resolvedArgument;
-    constructor(version, quality = '', dotnetChannel, inputName = 'dotnet-version') {
+    constructor(version, quality = '', dotnetChannel) {
         this.quality = quality;
         this.dotnetChannel = dotnetChannel;
-        this.inputName = inputName;
         this.inputVersion = version.trim();
         this.resolvedArgument = { type: '', value: '', qualityFlag: false };
     }
@@ -44024,7 +44022,7 @@ class DotnetVersionResolver {
             warning(`The 'dotnet-channel' input is only supported when 'dotnet-version' is set to 'latest'.`);
         }
         if (!semver_default().validRange(this.inputVersion) && !this.isLatestPatchSyntax()) {
-            throw new Error(`The '${this.inputName}' was supplied in invalid format: ${this.inputVersion}! Supported syntax: ${this.getSupportedSyntax()}`);
+            throw new Error(`The 'dotnet-version' was supplied in invalid format: ${this.inputVersion}! Supported syntax: A.B.C, A.B, A.B.x, A, A.x, A.B.Cxx, latest`);
         }
         if (semver_default().valid(this.inputVersion)) {
             this.createVersionArgument();
@@ -44036,23 +44034,11 @@ class DotnetVersionResolver {
     isNumericTag(versionTag) {
         return /^\d+$/.test(versionTag);
     }
-    isRuntimeInput() {
-        return this.inputName === 'dotnet-runtime';
-    }
-    getSupportedSyntax() {
-        return this.isRuntimeInput()
-            ? 'A.B.C, A.B, A.B.x, A, A.x, latest'
-            : 'A.B.C, A.B, A.B.x, A, A.x, A.B.Cxx, latest';
-    }
     isLatestPatchSyntax() {
         const majorTag = this.inputVersion.match(/^(?<majorTag>\d+)\.\d+\.\d{1}x{2}$/)?.groups?.majorTag;
-        // Feature bands (A.B.Cxx) exist only for SDKs, so the install script can't resolve them for runtimes.
-        if (majorTag && this.isRuntimeInput()) {
-            throw new Error(`The '${this.inputName}' was supplied in invalid format: ${this.inputVersion}! The A.B.Cxx feature band syntax applies only to .NET SDKs and is supported only by 'dotnet-version'. Supported syntax: ${this.getSupportedSyntax()}`);
-        }
         if (majorTag &&
             parseInt(majorTag) < LATEST_PATCH_SYNTAX_MINIMAL_MAJOR_TAG) {
-            throw new Error(`The '${this.inputName}' was supplied in invalid format: ${this.inputVersion}! The A.B.Cxx syntax is available since the .NET 5.0 release.`);
+            throw new Error(`The 'dotnet-version' was supplied in invalid format: ${this.inputVersion}! The A.B.Cxx syntax is available since the .NET 5.0 release.`);
         }
         return majorTag ? true : false;
     }
@@ -44556,8 +44542,7 @@ class DotnetCoreInstaller {
         }
     }
     findLocalRuntimeVersion() {
-        if (DotnetCoreInstaller.FeatureBandSyntax.test(this.version) ||
-            !this.hasDotnetMuxer()) {
+        if (!this.hasDotnetMuxer()) {
             return null;
         }
         const dotnetVersions = this.getInstalledRuntimeVersions('Microsoft.NETCore.App');
@@ -44654,6 +44639,7 @@ class DotnetCoreInstaller {
         return this.parseInstalledVersion(dotnetInstallOutput.stdout);
     }
     async installRuntime() {
+        this.validateRuntimeVersion();
         DotnetInstallDir.setEnvironmentVariable();
         const isCrossArch = !!this.architecture &&
             normalizeArch(this.architecture) !== normalizeArch(external_os_default().arch());
@@ -44665,7 +44651,7 @@ class DotnetCoreInstaller {
             }
             info(`'check-latest' is false but no complete local runtime installation satisfies the '${this.version}' request. Falling back to online installation.`);
         }
-        const versionResolver = new DotnetVersionResolver(this.version, this.quality, this.dotnetChannel, 'dotnet-runtime');
+        const versionResolver = new DotnetVersionResolver(this.version, this.quality, this.dotnetChannel);
         const dotnetVersion = await versionResolver.createDotnetVersion();
         if (this.quality && !dotnetVersion.qualityFlag) {
             warning(`The 'dotnet-quality' input can be used only with .NET runtime channels in A.B, A.B.x, A or A.x formats where the major tag is higher than 5, or 'latest' resolving to such a channel. You specified: ${dotnetVersion.value}. 'dotnet-quality' input is ignored for this runtime.`);
@@ -44693,6 +44679,18 @@ class DotnetCoreInstaller {
         }
         // The output remains the base runtime version, even when build numbers differ.
         return this.parseInstalledVersion(dotnetRuntimeStdout);
+    }
+    // Runs before the resolver, whose errors name 'dotnet-version'.
+    validateRuntimeVersion() {
+        if (this.version.toLowerCase() === 'latest' ||
+            semver_default().validRange(this.version)) {
+            return;
+        }
+        // Feature bands (A.B.Cxx) exist only for SDKs, so the install script can't resolve them for runtimes.
+        const reason = DotnetCoreInstaller.FeatureBandSyntax.test(this.version)
+            ? ` The A.B.Cxx feature band syntax applies only to .NET SDKs and is supported only by 'dotnet-version'.`
+            : '';
+        throw new Error(`The 'dotnet-runtime' was supplied in invalid format: ${this.version}!${reason} Supported syntax: A.B.C, A.B, A.B.x, A, A.x, latest`);
     }
     async resolveAspNetCoreVersion(dotnetVersion) {
         const version = dotnetVersion.value;

@@ -78,8 +78,7 @@ export class DotnetVersionResolver {
   constructor(
     version: string,
     private quality: QualityOptions = '',
-    private dotnetChannel?: string,
-    private inputName: string = 'dotnet-version'
+    private dotnetChannel?: string
   ) {
     this.inputVersion = version.trim();
     this.resolvedArgument = {type: '', value: '', qualityFlag: false};
@@ -127,7 +126,7 @@ export class DotnetVersionResolver {
 
     if (!semver.validRange(this.inputVersion) && !this.isLatestPatchSyntax()) {
       throw new Error(
-        `The '${this.inputName}' was supplied in invalid format: ${this.inputVersion}! Supported syntax: ${this.getSupportedSyntax()}`
+        `The 'dotnet-version' was supplied in invalid format: ${this.inputVersion}! Supported syntax: A.B.C, A.B, A.B.x, A, A.x, A.B.Cxx, latest`
       );
     }
     if (semver.valid(this.inputVersion)) {
@@ -141,32 +140,16 @@ export class DotnetVersionResolver {
     return /^\d+$/.test(versionTag);
   }
 
-  private isRuntimeInput(): boolean {
-    return this.inputName === 'dotnet-runtime';
-  }
-
-  private getSupportedSyntax(): string {
-    return this.isRuntimeInput()
-      ? 'A.B.C, A.B, A.B.x, A, A.x, latest'
-      : 'A.B.C, A.B, A.B.x, A, A.x, A.B.Cxx, latest';
-  }
-
   private isLatestPatchSyntax() {
     const majorTag = this.inputVersion.match(
       /^(?<majorTag>\d+)\.\d+\.\d{1}x{2}$/
     )?.groups?.majorTag;
-    // Feature bands (A.B.Cxx) exist only for SDKs, so the install script can't resolve them for runtimes.
-    if (majorTag && this.isRuntimeInput()) {
-      throw new Error(
-        `The '${this.inputName}' was supplied in invalid format: ${this.inputVersion}! The A.B.Cxx feature band syntax applies only to .NET SDKs and is supported only by 'dotnet-version'. Supported syntax: ${this.getSupportedSyntax()}`
-      );
-    }
     if (
       majorTag &&
       parseInt(majorTag) < LATEST_PATCH_SYNTAX_MINIMAL_MAJOR_TAG
     ) {
       throw new Error(
-        `The '${this.inputName}' was supplied in invalid format: ${this.inputVersion}! The A.B.Cxx syntax is available since the .NET 5.0 release.`
+        `The 'dotnet-version' was supplied in invalid format: ${this.inputVersion}! The A.B.Cxx syntax is available since the .NET 5.0 release.`
       );
     }
     return majorTag ? true : false;
@@ -826,10 +809,7 @@ export class DotnetCoreInstaller {
   }
 
   private findLocalRuntimeVersion(): string | null {
-    if (
-      DotnetCoreInstaller.FeatureBandSyntax.test(this.version) ||
-      !this.hasDotnetMuxer()
-    ) {
+    if (!this.hasDotnetMuxer()) {
       return null;
     }
     const dotnetVersions = this.getInstalledRuntimeVersions(
@@ -966,6 +946,7 @@ export class DotnetCoreInstaller {
   }
 
   public async installRuntime(): Promise<string | null> {
+    this.validateRuntimeVersion();
     DotnetInstallDir.setEnvironmentVariable();
     const isCrossArch =
       !!this.architecture &&
@@ -987,8 +968,7 @@ export class DotnetCoreInstaller {
     const versionResolver = new DotnetVersionResolver(
       this.version,
       this.quality,
-      this.dotnetChannel,
-      'dotnet-runtime'
+      this.dotnetChannel
     );
     const dotnetVersion = await versionResolver.createDotnetVersion();
     if (this.quality && !dotnetVersion.qualityFlag) {
@@ -1033,6 +1013,23 @@ export class DotnetCoreInstaller {
 
     // The output remains the base runtime version, even when build numbers differ.
     return this.parseInstalledVersion(dotnetRuntimeStdout);
+  }
+
+  // Runs before the resolver, whose errors name 'dotnet-version'.
+  private validateRuntimeVersion(): void {
+    if (
+      this.version.toLowerCase() === 'latest' ||
+      semver.validRange(this.version)
+    ) {
+      return;
+    }
+    // Feature bands (A.B.Cxx) exist only for SDKs, so the install script can't resolve them for runtimes.
+    const reason = DotnetCoreInstaller.FeatureBandSyntax.test(this.version)
+      ? ` The A.B.Cxx feature band syntax applies only to .NET SDKs and is supported only by 'dotnet-version'.`
+      : '';
+    throw new Error(
+      `The 'dotnet-runtime' was supplied in invalid format: ${this.version}!${reason} Supported syntax: A.B.C, A.B, A.B.x, A, A.x, latest`
+    );
   }
 
   private async resolveAspNetCoreVersion(
