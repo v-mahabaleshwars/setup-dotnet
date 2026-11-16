@@ -105743,7 +105743,6 @@ async function run() {
         };
         const runtimeVersions = getMultilineInput('dotnet-runtime');
         const installedDotnetVersions = [];
-        const installedRuntimeVersions = [];
         const architecture = getArchitectureInput();
         const checkLatest = getCheckLatestInput();
         let dotnetChannel = getInput('dotnet-channel');
@@ -105823,7 +105822,7 @@ async function run() {
             const runtimeChannel = dotnetChannel.replace(/^(\d+\.\d+)\.\dxx$/, '$1');
             for (const runtimeVersion of uniqueRuntimeVersions) {
                 const dotnetInstaller = new DotnetCoreInstaller(runtimeVersion, quality, architecture, runtimeVersion === 'latest' ? runtimeChannel : undefined, checkLatest);
-                installedRuntimeVersions.push(await dotnetInstaller.installRuntime());
+                await dotnetInstaller.installRuntime();
             }
             // installRuntime() resets DOTNET_INSTALL_DIR to the base directory.
             setDotnetInstallDir(architecture);
@@ -105837,9 +105836,7 @@ async function run() {
         if (sourceUrl) {
             configAuthentication(sourceUrl, configFile);
         }
-        outputInstalledVersion(installedDotnetVersions.length
-            ? installedDotnetVersions
-            : installedRuntimeVersions, globalJsonFileInput);
+        outputInstalledVersion(installedDotnetVersions, globalJsonFileInput);
         if (getBooleanInput('cache') && isCacheFeatureAvailable()) {
             const cacheDependencyPath = getInput('cache-dependency-path');
             await cache_restore_restoreCache(cacheDependencyPath);

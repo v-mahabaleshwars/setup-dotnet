@@ -230,24 +230,18 @@ describe('setup-dotnet tests', () => {
         delete process.env['DOTNET_INSTALL_DIR'];
       });
 
-      it('should install unique runtime versions, add PATH and output the highest version without an SDK', async () => {
+      it('should install unique runtime versions, add PATH and not set the dotnet-version output without an SDK', async () => {
         inputs['dotnet-runtime'] = ['8.0.x', '9.0.x', '8.0.x'];
         installRuntimeSpy
           .mockResolvedValueOnce('8.0.11')
           .mockResolvedValueOnce('9.0.1');
-        maxSatisfyingSpy.mockReturnValue('9.0.1');
 
         await setup.run();
         expect(setFailedSpy).not.toHaveBeenCalled();
         expect(installDotnetSpy).not.toHaveBeenCalled();
         expect(installRuntimeSpy).toHaveBeenCalledTimes(2);
         expect(DotnetInstallDir.addToPath).toHaveBeenCalledTimes(1);
-        expect(maxSatisfyingSpy).toHaveBeenCalledWith(
-          ['8.0.11', '9.0.1'],
-          '*',
-          {includePrerelease: true}
-        );
-        expect(setOutputSpy).toHaveBeenCalledWith('dotnet-version', '9.0.1');
+        expect(setOutputSpy).not.toHaveBeenCalled();
       });
 
       it('should forward dotnet-channel (feature band as A.B), dotnet-quality and check-latest to runtime latest', async () => {

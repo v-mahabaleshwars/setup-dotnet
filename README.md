@@ -58,7 +58,7 @@ steps:
 
 The `dotnet-runtime` input allows you to install .NET runtimes separately from SDKs. This is useful for multi-targeting scenarios where you need one SDK version but multiple runtime versions.
 
-When `dotnet-runtime` is specified, both the .NET Runtime (Microsoft.NETCore.App) and the ASP.NET Core Runtime (Microsoft.AspNetCore.App) are installed for each specified version. Before .NET Core 2.1, only the base runtime is installed. If no SDK is installed, the `dotnet-version` output will reflect the installed base runtime version.
+When `dotnet-runtime` is specified, both the .NET Runtime (Microsoft.NETCore.App) and the ASP.NET Core Runtime (Microsoft.AspNetCore.App) are installed for each specified version. Before .NET Core 2.1, only the base runtime is installed.
 
 For exact preview/RC versions, release metadata selects the matching ASP.NET Core build. If the mapping is unavailable, the action warns and tries the same exact version; installer failures remain fatal. `dotnet-quality` continues to apply to both SDKs and runtimes.
 
@@ -395,7 +395,7 @@ When the input is not set, the action reads the `DOTNET_CHECK_LATEST` environmen
 
 ### `dotnet-version`
 
-Using the **dotnet-version** output it's possible to get the installed by the action .NET SDK version. If no SDK is installed by the action (for example, when only `dotnet-runtime` is specified and no `global.json` file is found), the output contains the installed .NET runtime version instead.
+Using the **dotnet-version** output it's possible to get the installed by the action .NET SDK version. 
 
 **Single version installation**
 
